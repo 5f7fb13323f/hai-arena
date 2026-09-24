@@ -1,0 +1,188 @@
+rules_version = '2';
+
+// HAI ARENA — Firestore security rules
+// Paste into Firebase console -> Firestore Database -> Rules -> Publish.
+//
+// Model:
+//   /admins/{uid}                        created by hand in the console
+//   /users/{uid}                         username, createdAt, eventId (host sets eventId)
+//   /events/{eid}                        name, phase, activeTaskId, semi{...}, finale{...}
+//   /events/{eid}/participants/{uid}     username, teamId, slot
+//   /events/{eid}/teams/{tid}            name, points, bonus — teams rename themselves in the lobby
+//   /events/{eid}/tasks/{taskId}         title, type, status, payload, endsAt
+//   /events/{eid}/keys/{taskId}          answer key + host overrides — host only, never sent to players
+//   /events/{eid}/media/{docId}          host-uploaded images (the semi-final reference picture)
+//   /events/{eid}/submissions/{sid}      sid = <taskId>__<teamId>__team
+//   /events/{eid}/semi/{teamId}          semi-final prompt reconstruction
+//   /events/{eid}/semivotes/{uid}        one semi-final vote per audience member
+//   /events/{eid}/finale/{teamId}        final entry (image data URL + prompt)
+//   /events/{eid}/votes/{uid}            one final vote per audience member
+
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(db)/documents/admins/$(request.auth.uid));
+    }
+
+    function partPath(eid) {
+      return /databases/$(db)/documents/events/$(eid)/participants/$(request.auth.uid);
+    }
+    function isPart(eid) { return signedIn() && exists(partPath(eid)); }
+    function myTeam(eid) { return get(partPath(eid)).data.teamId; }
+
+    function ev(eid) { return get(/databases/$(db)/documents/events/$(eid)).data; }
+    function finalists(eid) { return ev(eid).get('finalistTeamIds', []); }
+    function finalePhase(eid) { return ev(eid).get('finale', {}).get('phase', 'idle'); }
+    function semifinalists(eid) { return ev(eid).get('semifinalistTeamIds', []); }
+    function semiPhase(eid) { return ev(eid).get('semi', {}).get('phase', 'idle'); }
+
+    function taskOpen(eid, taskId) {
+      return get(/databases/$(db)/documents/events/$(eid)/tasks/$(taskId)).data.status == 'open';
+    }
+
+    function unchanged(field) {
+      return request.resource.data.get(field, null) == resource.data.get(field, null);
+    }
+
+    // ---- host flags --------------------------------------------------------
+    // Doc id = the user's auth uid. The first one is created by the bootstrap
+    // script or by hand in the console; after that an existing host can promote
+    // or demote others from the roster. A host account is therefore as
+    // sensitive as the event itself — keep its password out of the repo.
+    match /admins/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if false;
+    }
+
+    // ---- accounts ----------------------------------------------------------
+    match /users/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['username', 'usernameLower', 'createdAt'])
+        && request.resource.data.username is string
+        && request.resource.data.username.size() > 0
+        && request.resource.data.username.size() <= 30;
+      allow update, delete: if isAdmin();
+    }
+
+    // ---- events ------------------------------------------------------------
+    match /events/{eid} {
+      allow read: if isAdmin() || isPart(eid);
+      allow write: if isAdmin();
+
+      match /participants/{uid} {
+        allow read: if isAdmin() || isPart(eid);
+        allow write: if isAdmin();
+      }
+
+      // Teams may rename themselves, but only in the lobby and only the name.
+      match /teams/{tid} {
+        allow read: if isAdmin() || isPart(eid);
+        allow create, delete: if isAdmin();
+        allow update: if isAdmin()
+          || (isPart(eid)
+              && myTeam(eid) == tid
+              && ev(eid).phase == 'lobby'
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+              && request.resource.data.name is string
+              && request.resource.data.name.size() > 0
+              && request.resource.data.name.size() <= 28);
+      }
+
+      match /tasks/{taskId} {
+        allow read: if isAdmin() || isPart(eid);
+        allow write: if isAdmin();
+      }
+
+      // Answer keys and host overrides never leave the host.
+      match /keys/{taskId} {
+        allow read, write: if isAdmin();
+      }
+
+      // Host-uploaded images, e.g. the semi-final reference picture.
+      match /media/{docId} {
+        allow read: if isAdmin() || isPart(eid);
+        allow write: if isAdmin();
+      }
+
+      // Team answers. One doc per team per task: <taskId>__<teamId>__team
+      match /submissions/{sid} {
+        allow get: if isAdmin()
+          || (isPart(eid) && resource.data.teamId == myTeam(eid));
+        allow list: if isAdmin() || isPart(eid);
+
+        allow create: if isAdmin()
+          || (isPart(eid)
+              && request.resource.data.teamId == myTeam(eid)
+              && sid == request.resource.data.taskId + '__' + request.resource.data.teamId + '__team'
+              && request.resource.data.by == request.auth.uid
+              && taskOpen(eid, request.resource.data.taskId)
+              && !('awarded' in request.resource.data)
+              && !('locked' in request.resource.data));
+
+        allow update: if isAdmin()
+          || (isPart(eid)
+              && resource.data.teamId == myTeam(eid)
+              && resource.data.get('locked', false) != true
+              && unchanged('teamId') && unchanged('taskId')
+              && unchanged('awarded') && unchanged('locked')
+              && taskOpen(eid, resource.data.taskId));
+
+        allow delete: if isAdmin();
+      }
+
+      // Semi-final prompt reconstructions: doc id = teamId.
+      // While teams are still writing, a team can only read its own entry —
+      // otherwise the last team to submit could simply copy the best one.
+      match /semi/{tid} {
+        allow get: if isAdmin()
+          || (isPart(eid) && (myTeam(eid) == tid || semiPhase(eid) != 'creating'));
+        allow list: if isAdmin() || (isPart(eid) && semiPhase(eid) != 'creating');
+        allow write: if isAdmin()
+          || (isPart(eid)
+              && myTeam(eid) == tid
+              && tid in semifinalists(eid)
+              && semiPhase(eid) == 'creating');
+      }
+
+      match /semivotes/{uid} {
+        allow get: if isAdmin() || (signedIn() && request.auth.uid == uid);
+        allow list: if isAdmin();
+        allow create, update: if signedIn() && request.auth.uid == uid && isPart(eid)
+          && semiPhase(eid) == 'voting'
+          && !(myTeam(eid) in semifinalists(eid))
+          && request.resource.data.teamId in semifinalists(eid)
+          && request.resource.data.keys().hasOnly(['teamId', 'at']);
+        allow delete: if isAdmin();
+      }
+
+      // Final entries: doc id = teamId. Images are shown on the big screen as
+      // they land, so these stay readable throughout.
+      match /finale/{tid} {
+        allow read: if isAdmin() || isPart(eid);
+        allow write: if isAdmin()
+          || (isPart(eid)
+              && myTeam(eid) == tid
+              && tid in finalists(eid)
+              && finalePhase(eid) == 'creating');
+      }
+
+      match /votes/{uid} {
+        allow get: if isAdmin() || (signedIn() && request.auth.uid == uid);
+        allow list: if isAdmin();
+        allow create, update: if signedIn() && request.auth.uid == uid && isPart(eid)
+          && finalePhase(eid) == 'voting'
+          && !(myTeam(eid) in finalists(eid))
+          && request.resource.data.teamId in finalists(eid)
+          && request.resource.data.keys().hasOnly(['teamId', 'at']);
+        allow delete: if isAdmin();
+      }
+    }
+  }
+}
