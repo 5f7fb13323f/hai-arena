@@ -77,6 +77,10 @@ function attachEvent() {
     S.me = snap.exists() ? { id: snap.id, ...snap.data() } : null;
     attachSubmission();
     attachTeammates();
+    // Round 5 needs my team, so it cannot attach until this arrives. On a
+    // fresh login this snapshot lands AFTER the event doc, which is why the
+    // reference image used to be missing until something else changed.
+    attachSemi();
     paint();
   }, () => paint()));
 

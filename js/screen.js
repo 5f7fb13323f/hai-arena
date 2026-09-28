@@ -111,36 +111,45 @@ function paint() {
   tick();
 }
 
-// 16 tiles a slide, advancing every 10 seconds, sliding horizontally.
-const GALLERY_PER_SLIDE = 16;
+// Up to 16 tiles a slide, filling the screen, advancing every 10 seconds.
+// Slides are balanced rather than greedy: 20 entries become 10 + 10, not
+// 16 + 4, so the last slide never looks half-empty.
+const GALLERY_MAX = 16;
 
 function gallery(entries, counts, showVotes) {
   const byId = Object.fromEntries(S.teams.map(x => [x.id, x]));
+  if (!entries.length) return `<div class="card center muted">Nothing submitted yet.</div>`;
+
+  const slideCount = Math.max(1, Math.ceil(entries.length / GALLERY_MAX));
+  const perSlide = Math.ceil(entries.length / slideCount);
   const slides = [];
-  for (let i = 0; i < entries.length; i += GALLERY_PER_SLIDE) {
-    slides.push(entries.slice(i, i + GALLERY_PER_SLIDE));
-  }
-  if (!slides.length) return `<div class="card center muted">Nothing submitted yet.</div>`;
+  for (let i = 0; i < entries.length; i += perSlide) slides.push(entries.slice(i, i + perSlide));
   const index = S.slide % slides.length;
 
   return `
     <div class="gallery" data-slides="${slides.length}">
       <div class="gallery__track" style="width:${slides.length * 100}%;
            transform:translateX(-${index * (100 / slides.length)}%)">
-        ${slides.map(slide => `<div class="gallery__slide" style="width:${100 / slides.length}%">
-          <div class="gallery__grid">
-            ${slide.map(e => `<figure class="tile">
-              ${e.image
-                ? `<img src="${esc(e.image)}" alt="">`
-                : `<div class="tile__blank">…</div>`}
-              <figcaption>
-                <span class="dot" style="background:${teamColor(e.id)}"></span>
-                <span class="tile__name">${esc(byId[e.id]?.name || e.id)}</span>
-                ${showVotes ? `<span class="tile__votes">${counts[e.id] || 0}</span>` : ''}
-              </figcaption>
-            </figure>`).join('')}
-          </div>
-        </div>`).join('')}
+        ${slides.map(slide => {
+          const cols = Math.min(4, slide.length);
+          const rows = Math.ceil(slide.length / cols);
+          return `<div class="gallery__slide" style="width:${100 / slides.length}%">
+            <div class="gallery__grid"
+                 style="grid-template-columns:repeat(${cols},minmax(0,1fr));
+                        grid-template-rows:repeat(${rows},minmax(0,1fr))">
+              ${slide.map(e => `<figure class="tile">
+                ${e.image
+                  ? `<img src="${esc(e.image)}" alt="">`
+                  : `<div class="tile__blank">…</div>`}
+                <figcaption>
+                  <span class="dot" style="background:${teamColor(e.id)}"></span>
+                  <span class="tile__name">${esc(byId[e.id]?.name || e.id)}</span>
+                  ${showVotes ? `<span class="tile__votes">${counts[e.id] || 0}</span>` : ''}
+                </figcaption>
+              </figure>`).join('')}
+            </div>
+          </div>`;
+        }).join('')}
       </div>
       ${slides.length > 1 ? `<div class="gallery__dots">
         ${slides.map((_, i) => `<span class="${i === index ? 'is-on' : ''}"></span>`).join('')}
@@ -325,9 +334,12 @@ function showcaseView() {
   const task = S.task && S.task.id === taskId ? S.task : null;
   if (task && (task.type === 'quiz-single' || task.type === 'quiz-multi')) return reviewView(task);
   const byId = Object.fromEntries(S.teams.map(x => [x.id, x]));
+  const golf = task?.type === 'golf';
   const rows = S.subs
-    .filter(x => x.taskId === taskId && (x.name || x.text))
-    .sort((a, b) => String(byId[a.teamId]?.name || '').localeCompare(String(byId[b.teamId]?.name || '')));
+    .filter(x => x.taskId === taskId && (golf ? (x.prompt || x.output) : (x.name || x.text)))
+    .sort((a, b) => golf
+      ? (a.prompt || '').length - (b.prompt || '').length
+      : String(byId[a.teamId]?.name || '').localeCompare(String(byId[b.teamId]?.name || '')));
 
   return `
     <div class="statusbar">
@@ -342,8 +354,17 @@ function showcaseView() {
             <span class="dot" style="background:${teamColor(x.teamId)}"></span>
             <b>${esc(byId[x.teamId]?.name || x.teamId)}</b>
           </div>
-          ${x.name ? `<h2 style="margin:0 0 6px">${esc(x.name)}</h2>` : ''}
-          <div style="line-height:1.5">${esc(String(x.text || '').slice(0, 700))}</div>
+          ${golf ? `
+            <div class="row" style="margin-bottom:6px">
+              <span class="pill">${(x.prompt || '').length} chars</span>
+              ${typeof x.awarded === 'number' ? `<span class="pill pill--live">${x.awarded} pts</span>` : ''}
+            </div>
+            <div style="line-height:1.5;font-weight:650">${esc(String(x.prompt || '').slice(0, 300))}</div>
+            <div class="review__note">${esc(String(x.output || '').slice(0, 400))}</div>
+          ` : `
+            ${x.name ? `<h2 style="margin:0 0 6px">${esc(x.name)}</h2>` : ''}
+            <div style="line-height:1.5">${esc(String(x.text || '').slice(0, 700))}</div>
+          `}
         </div>`).join('')
       : `<div class="card center muted">No answers yet.</div>`}
     </div>`;

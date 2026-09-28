@@ -152,8 +152,14 @@ async function seedTasks() {
 
   const b = writeBatch(db);
   for (const task of TASKS) {
+    // Written in order, the answers alternate — true, false, true, false — and
+    // a team that spots the rhythm scores without reading. Shuffle once per
+    // event so everyone sees the same order but nobody can pattern-match it.
+    const seeded = (task.type === 'quiz-single' || task.type === 'quiz-multi')
+      ? { ...task, payload: { ...task.payload, items: shuffle(task.payload.items) } }
+      : task;
     b.set(doc(db, 'events', S.eid, 'tasks', task.id), {
-      ...task, status: 'locked', endsAt: null
+      ...seeded, status: 'locked', endsAt: null
     }, { merge: true });
     if (haveAnswers) {
       b.set(doc(db, 'events', S.eid, 'keys', task.id), {
