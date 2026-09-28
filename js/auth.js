@@ -112,7 +112,6 @@ export function renderAuth(container, { onDone } = {}) {
   };
 
   paint();
-  window.addEventListener('langchange', paint);
 }
 
 function authMessage(ex) {

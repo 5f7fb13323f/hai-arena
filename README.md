@@ -12,7 +12,7 @@ Three pages:
 | `admin.html` | you, the host | build teams, open/close tasks, score, run both voted rounds |
 | `screen.html` | the laptop driving the projector | leaderboard, timer, semi-final image, finale, winner |
 
-Bilingual EN/PL with a toggle in the header; the host panel is English only.
+English throughout.
 
 ---
 
@@ -113,7 +113,7 @@ you pasted. A truncated copy is the usual cause.
 | 38–46 | **Semi-final — Reverse Prompt.** Reveal your image, **Start** (5 min). The five teams reconstruct the prompt. Then **Open voting**: everyone else picks the best reconstruction. |
 | 46–49 | **Results** → read your real prompt out against the winner's. **Apply semi points**, then **Send top 3 to the final**. |
 | 49–57 | **Final — Prompt Battle.** Pick a theme, **Start creating** (3 min), finalists upload their image. **Open voting**. |
-| 57–60 | **Show results** → **Apply final points** → winner on the big screen. |
+| 57–60 | **Show results** → **Apply final points** → **End event & show winners**: every phone shows its team's final placing, the big screen shows the podium. |
 
 Four Part 1 tasks plus two voted rounds is a full hour with no slack. If you want room to
 breathe, drop **Prompt Golf** and give those minutes to the semi-final.
@@ -124,8 +124,10 @@ apply-points buttons. Grading twice is safe — totals are recomputed from scrat
 
 ## 7. The tasks
 
-All content lives in [`js/content.js`](js/content.js) in both languages and is copied into
-Firestore when you seed, so you can also edit it in the Firebase console up to the last minute.
+All content lives in [`js/content.js`](js/content.js) and is copied into Firestore when you
+seed, so you can also edit it in the Firebase console up to the last minute. Every task and
+both voted rounds carry a numbered `steps` list, which the app shows to players as a
+"How to play" box — keep those updated if you change a task.
 
 | Task | Type | Scoring |
 |---|---|---|
@@ -171,7 +173,10 @@ runs from the host panel, so it only works while that page is open — which it 
 - **Costs**: with 100 players, four tasks and two voted rounds you are well inside the Spark
   free daily quota (50k reads / 20k writes).
 - **Semi-final fairness**: while teams are writing their reconstruction, the rules stop a team
-  reading anyone else's entry. Everything opens up when you start voting.
+  reading anyone else's entry. Everything opens up when you start voting, and voters then see
+  each team's generated picture next to its prompt.
+- **Ending**: "End event & show winners" closes any open task, stops auto-join and switches
+  every screen to the results. "Reopen the event" undoes it.
 - **Host accounts are powerful**: a host can grade, reshuffle teams and promote other hosts.
   Treat `admin1`'s password like an admin password, not a demo one.
 - **Branding**: the HAI mark here — an H with the AI lit up inside it — is original work for
@@ -185,7 +190,7 @@ index.html  admin.html  screen.html
 css/style.css
 js/  firebase-config.js   ← your Firebase keys go here
      firebase.js  auth.js  i18n.js  util.js
-     content.js           ← all task text, EN + PL
+     content.js           ← all task text and instructions
      answers.js           ← answer keys; DELETE after seeding
      scoring.js           ← pure scoring functions
      bulk.js              ← creates accounts without signing the host out

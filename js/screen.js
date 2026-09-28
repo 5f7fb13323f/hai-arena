@@ -1,6 +1,6 @@
 import { db, doc, collection, onSnapshot, getDocs } from './firebase.js';
 import { renderAuth, watchAuth, isAdmin } from './auth.js';
-import { t, tr, mountLangToggle } from './i18n.js';
+import { t, tr } from './i18n.js';
 import { $, esc, fmtClock, toMs, teamColor } from './util.js';
 import { rankTeams } from './scoring.js';
 import { APP_TITLE } from './firebase-config.js';
@@ -15,8 +15,6 @@ let unsubs = [];
 const stopAll = () => { unsubs.forEach(u => { try { u(); } catch {} }); unsubs = []; };
 
 S.joinUrl = location.href.replace(/screen\.html.*$/, '').replace(/^https?:\/\//, '');
-mountLangToggle($('#langToggle'));
-window.addEventListener('langchange', paint);
 
 watchAuth(async (user) => {
   stopAll();
@@ -98,10 +96,46 @@ function paint() {
     return;
   }
   root().innerHTML =
+    S.event.phase === 'done' ? podiumView() :
     S.event.phase === 'finale' ? finaleView() :
     S.event.phase === 'semi' ? semiView() :
     mainView();
   tick();
+}
+
+function podiumView() {
+  const ranked = rankTeams(S.teams);
+  const top = ranked.slice(0, 3);
+  const rest = ranked.slice(3);
+  const medals = ['🥇', '🥈', '🥉'];
+  const order = [1, 0, 2];          // silver, gold, bronze — gold in the middle
+  const heights = [200, 260, 160];
+
+  return `
+    <div class="center" style="margin-bottom:26px">
+      <span class="pill pill--live">${esc(t('endTitle'))}</span>
+      <h1 style="font-size:clamp(34px,5vw,68px);margin-top:10px">${esc(S.event.name || '')}</h1>
+    </div>
+    <div class="podium">
+      ${order.filter(i => top[i]).map(i => {
+        const x = top[i];
+        return `<div class="podium__col">
+          <div class="podium__medal">${medals[i]}</div>
+          <div class="podium__name"><span class="dot" style="background:${teamColor(x.id)}"></span>${esc(x.name || x.id)}</div>
+          <div class="podium__pts">${Number(x.points || 0)}</div>
+          <div class="podium__block" style="height:${heights[i]}px">${x.rank}</div>
+        </div>`;
+      }).join('')}
+    </div>
+    ${rest.length ? `<div class="card" style="margin-top:28px">
+      <h2>${esc(t('endStandings'))}</h2>
+      <div class="lb">${rest.map(x => `
+        <div class="lb__row">
+          <div class="lb__rank">${x.rank}</div>
+          <div class="lb__name"><span class="dot" style="background:${teamColor(x.id)}"></span><span>${esc(x.name || x.id)}</span></div>
+          <div class="lb__pts">${Number(x.points || 0)}</div>
+        </div>`).join('')}</div>
+    </div>` : ''}`;
 }
 
 function semiView() {
@@ -139,6 +173,7 @@ function semiView() {
                   <b class="grow" style="font-size:19px">${esc(byId[id]?.name || id)}</b>
                   ${showVotes ? `<span class="entry__votes">${c[id] || 0}</span>` : ''}
                 </div>
+                ${e?.image ? `<img src="${esc(e.image)}" alt="" style="width:100%;border-radius:10px;margin-bottom:8px;display:block">` : ''}
                 <div style="line-height:1.5">${esc((e?.prompt || '…').slice(0, 320))}</div>
               </div>`;
             }).join('')}

@@ -93,7 +93,7 @@ function selectEvent(eid) {
 // smallest team. Only works while this page is open, which it is all session.
 let placing = false;
 async function autoPlace() {
-  if (!S.event?.autoJoin || !S.eid || placing) return;
+  if (!S.event?.autoJoin || S.event.phase === 'done' || !S.eid || placing) return;
 
   const missing = S.users.filter(u => !S.participants.some(p => p.id === u.id));
   const unassigned = S.participants.filter(p => !p.teamId);
@@ -281,6 +281,10 @@ async function setTeamBonus(teamId, bonus) {
   await b.commit();
 }
 
+// tasks seeded by an older build stored {en, pl} objects
+const taskTitle = (task) => (typeof task?.title === 'string' ? task.title : task?.title?.en || task?.id || '');
+const themeText = (th) => (typeof th === 'string' ? th : th?.en || '');
+
 const countVotes = (rows) => {
   const c = {};
   for (const v of rows) c[v.teamId] = (c[v.teamId] || 0) + 1;
@@ -300,6 +304,76 @@ async function applyVotedRound(teamIds, counts, ladder, label) {
   await b.commit();
   const name = id => S.teams.find(x => x.id === id)?.name || id;
   toast(`${label} points applied — ${ranked.map(r => `${name(r.id)} ${award[r.id]}`).join(', ')}`);
+}
+
+// Firestore has no recursive delete from the browser, so we walk the
+// subcollections ourselves. Live events are refused: only a finished event
+// or one still sitting in the lobby can go.
+const EVENT_SUBCOLLECTIONS = [
+  'participants', 'teams', 'tasks', 'keys', 'media',
+  'submissions', 'semi', 'semivotes', 'finale', 'votes'
+];
+
+const isDeletable = (ev) => !!ev && (ev.phase === 'done' || ev.phase === 'lobby');
+
+async function deleteEvent(eid) {
+  const ev = S.events.find(x => x.id === eid);
+  if (!isDeletable(ev)) return toast('That event is still running — end it first.', 'err');
+
+  const refs = [];
+  const memberIds = [];
+  for (const name of EVENT_SUBCOLLECTIONS) {
+    // A collection that never existed comes back empty; anything else that
+    // goes wrong must stop us, because half-deleting an event is worse than
+    // not deleting it at all.
+    let qs;
+    try {
+      qs = await getDocs(collection(db, 'events', eid, name));
+    } catch (e) {
+      toast(`Could not read ${name}: ${e.message}. Nothing was deleted.`, 'err');
+      return;
+    }
+    for (const d of (qs.docs || [])) {
+      refs.push(doc(db, 'events', eid, name, d.id));
+      if (name === 'participants') memberIds.push(d.id);
+    }
+  }
+
+  // Players follow users/<uid>.eventId, so clear it or they wait forever.
+  for (let i = 0; i < memberIds.length; i += 200) {
+    const b = writeBatch(db);
+    for (const uid of memberIds.slice(i, i + 200)) {
+      b.set(doc(db, 'users', uid), { eventId: null }, { merge: true });
+    }
+    await b.commit();
+  }
+
+  for (let i = 0; i < refs.length; i += 400) {
+    const b = writeBatch(db);
+    for (const ref of refs.slice(i, i + 400)) b.delete(ref);
+    await b.commit();
+  }
+
+  await deleteDoc(doc(db, 'events', eid));   // the event doc goes last
+  const next = S.events.find(x => x.id !== eid);
+  selectEvent(next ? next.id : null);
+  toast(`Deleted "${ev.name}" and ${refs.length} record(s)`);
+}
+
+async function endEvent() {
+  const open = S.tasks.find(x => x.status === 'open');
+  const b = writeBatch(db);
+  if (open) b.set(doc(db, 'events', S.eid, 'tasks', open.id), { status: 'closed' }, { merge: true });
+  b.set(doc(db, 'events', S.eid), {
+    phase: 'done', activeTaskId: null, autoJoin: false, endedAt: serverTimestamp()
+  }, { merge: true });
+  await b.commit();
+  toast('Event ended — winners are on the big screen');
+}
+
+async function reopenEvent() {
+  await setEvent({ phase: 'part1', endedAt: null });
+  toast('Event reopened');
 }
 
 async function uploadSemiImage(file) {
@@ -331,15 +405,34 @@ function paint() {
         ${S.events.length ? '' : '<option value="">— no events —</option>'}
       </select>
       <button class="btn btn--sm" id="newEv">New event</button>
+      <button class="btn btn--sm btn--danger" id="delEv"
+        ${isDeletable(S.event) ? '' : 'disabled'}
+        title="${isDeletable(S.event)
+          ? 'Delete this event and all of its data'
+          : 'Only an event in the lobby or a finished one can be deleted'}">Delete</button>
       <a class="btn btn--ghost btn--sm" href="./screen.html" target="_blank">Big screen ↗</a>
     </div>
+    ${S.event ? `<p class="faint" style="margin:-8px 0 12px">
+      state: <b>${esc(S.event.phase || 'lobby')}</b>${isDeletable(S.event) ? '' : ' — running, so it cannot be deleted'}
+    </p>` : ''}
     ${S.eid && S.event ? `<div class="admin-grid">
       <div>${rosterCard()}${accountsCard()}${runOfShowCard()}</div>
-      <div>${tasksCard()}${gradingCard()}${semiCard()}${finaleCard()}${teamsCard()}</div>
+      <div>${tasksCard()}${gradingCard()}${semiCard()}${finaleCard()}${endCard()}${teamsCard()}</div>
     </div>` : `${accountsCard()}
       <div class="card center muted">Create an event to begin.</div>`}`;
 
   $('#newEv').addEventListener('click', createEvent);
+  $('#delEv')?.addEventListener('click', () => {
+    if (!isDeletable(S.event)) return;
+    const counts = [
+      `${S.participants.length} participant(s)`,
+      `${S.teams.length} team(s)`,
+      `${S.subs.length} answer sheet(s)`,
+      `${S.semi.length + S.finale.length} uploaded image(s)`
+    ].join(', ');
+    if (!confirm(`Delete "${S.event.name}" permanently?\n\nThis removes ${counts}. It cannot be undone.\n\nThe accounts themselves are not touched.`)) return;
+    deleteEvent(S.eid);
+  });
   $('#evSel')?.addEventListener('change', e => selectEvent(e.target.value));
   wire();
 }
@@ -362,8 +455,10 @@ function rosterCard() {
     </label>
 
     <div class="row">
-      <button class="btn btn--sm" id="addAll">Add everyone</button>
-      <button class="btn btn--sm btn--ghost" id="addSel">Add ticked</button>
+      <button class="btn btn--sm" id="addAll" ${S.users.length === S.participants.length ? 'disabled' : ''}>Add everyone</button>
+      <button class="btn btn--sm btn--ghost" id="addSel" ${S.users.length === S.participants.length ? 'disabled' : ''}>Add ticked</button>
+      ${S.users.length === S.participants.length
+        ? '<span class="faint">everyone is already in — next step is Shuffle</span>' : ''}
     </div>
     <div class="row" style="margin-top:10px">
       <span class="faint">Team size</span>
@@ -378,17 +473,15 @@ function rosterCard() {
         const p = S.participants.find(x => x.id === u.id);
         const team = S.teams.find(x => x.id === p?.teamId);
         return `<tr>
-          <td><input type="checkbox" class="upick" value="${esc(u.id)}" ${inEvent.has(u.id) ? 'disabled' : ''}></td>
+          <td>${p
+            ? '<span title="already in this event" style="color:var(--green);font-weight:700">✓</span>'
+            : `<input type="checkbox" class="upick" value="${esc(u.id)}">`}</td>
           <td>${esc(u.username || u.id)}
             ${S.hosts.includes(u.id) ? '<span class="pill pill--live" style="margin-left:6px">host</span>' : ''}</td>
           <td class="faint">${team
             ? `<span class="dot" style="background:${teamColor(team.id)};display:inline-block;margin-right:5px"></span>${esc(team.name)} · ${esc(String(p.slot ?? ''))}`
             : (p ? 'unassigned' : '—')}</td>
-          <td style="white-space:nowrap">
-            <button class="btn btn--sm btn--ghost" data-host="${esc(u.id)}"
-              title="${S.hosts.includes(u.id) ? 'Remove host rights' : 'Make this account a host'}"
-              >${S.hosts.includes(u.id) ? 'un-host' : 'host'}</button>
-            ${p ? `<button class="btn btn--sm btn--danger" data-rm="${esc(u.id)}">×</button>` : ''}</td>
+          <td>${p ? `<button class="btn btn--sm btn--danger" data-rm="${esc(u.id)}" title="Remove from this event">×</button>` : ''}</td>
         </tr>`;
       }).join('')}
       </tbody></table>
@@ -409,10 +502,27 @@ function accountsCard() {
     <p class="faint" style="margin:10px 0 0">
       ${S.busy ? esc(S.busy) : 'Asks for the password once, then creates them one by one. Your own session stays signed in. Accounts that already exist are skipped, so running it twice is safe.'}
     </p>
-    <p class="faint" style="margin:8px 0 0">
-      For a brand-new project, <code>tools/bootstrap.mjs</code> does hosts and testers in one command.
-      Use the <b>host</b> button in the roster to promote someone here.
-    </p>
+
+    <h2 style="font-size:16px;margin:18px 0 6px">Hosts</h2>
+    <div class="row" style="gap:6px;flex-wrap:wrap">
+      ${S.hosts.length
+        ? S.hosts.map(uid => {
+            const u = S.users.find(x => x.id === uid);
+            return `<span class="pill pill--live">${esc(u?.username || uid.slice(0, 8))}
+              <button class="btn btn--sm btn--ghost" data-unhost="${esc(uid)}"
+                style="padding:0 6px;margin-left:6px;border:0;color:var(--red)" title="Remove host rights">×</button></span>`;
+          }).join('')
+        : '<span class="faint">none yet — add the first one in the Firebase console</span>'}
+    </div>
+    <div class="row" style="margin-top:10px">
+      <select id="hostPick" class="grow">
+        <option value="">— choose an account —</option>
+        ${S.users.filter(u => !S.hosts.includes(u.id))
+          .map(u => `<option value="${esc(u.id)}">${esc(u.username || u.id)}</option>`).join('')}
+      </select>
+      <button class="btn btn--sm btn--ghost" id="makeHost">Make host</button>
+    </div>
+    <p class="faint" style="margin:8px 0 0">A host can run the event and promote other hosts.</p>
   </div>`;
 }
 
@@ -436,7 +546,7 @@ function tasksCard() {
       const n = S.subs.filter(s => s.taskId === task.id).length;
       const cls = task.status === 'open' ? 'pill--live' : task.status === 'closed' ? 'pill--closed' : '';
       return `<tr>
-        <td><b>${esc(task.title?.en || task.id)}</b><br><span class="faint">${esc(task.type)}</span></td>
+        <td><b>${esc(taskTitle(task))}</b><br><span class="faint">${esc(task.type)}</span></td>
         <td><span class="pill ${cls}">${esc(task.status)}</span></td>
         <td class="mono">${n} / ${S.teams.length}</td>
         <td><div class="row">
@@ -496,7 +606,7 @@ function gradingCard() {
   }).join('');
 
   return `<div class="card">
-    <h2>Review — ${esc(task.title?.en || taskId)}</h2>
+    <h2>Review — ${esc(taskTitle(task) || taskId)}</h2>
     <p class="faint">${subs.length} submission(s)${task.type === 'golf'
       ? ' · accept the ones whose output really met the target; the number box overrides the automatic score'
       : ''}</p>
@@ -578,7 +688,7 @@ function finaleCard() {
     <label class="field"><span>Theme</span>
       <select id="themeSel">
         <option value="">— pick a theme —</option>
-        ${FINALE_THEMES.map((th, i) => `<option value="${i}" ${f.theme?.en === th.en ? 'selected' : ''}>${esc(th.en)}</option>`).join('')}
+        ${FINALE_THEMES.map((th, i) => `<option value="${i}" ${themeText(f.theme) === th ? 'selected' : ''}>${esc(th)}</option>`).join('')}
       </select></label>
     <div class="row" style="margin-top:12px">
       <span class="faint">Minutes</span><input type="number" id="fmin" value="3" min="1" max="15">
@@ -599,6 +709,26 @@ function finaleCard() {
       <button class="btn btn--sm" id="applyFin">Apply final points (30/20/10)</button>
       <button class="btn btn--sm btn--danger" id="clearFin">Clear entries &amp; votes</button>
     </div>
+  </div>`;
+}
+
+function endCard() {
+  const done = S.event.phase === 'done';
+  const ranked = rankTeams(S.teams).slice(0, 3);
+  return `<div class="card">
+    <h2>End of event</h2>
+    ${done
+      ? `<p class="faint">The event is finished. Players see their final placing; the big screen shows the podium.</p>
+         <div class="lb" style="margin-bottom:12px">
+           ${ranked.map((x, i) => `<div class="lb__row">
+             <div class="lb__rank">${['🥇','🥈','🥉'][i] || x.rank}</div>
+             <div class="lb__name"><span class="dot" style="background:${teamColor(x.id)}"></span><span>${esc(x.name || x.id)}</span></div>
+             <div class="lb__pts">${Number(x.points || 0)}</div></div>`).join('')}
+         </div>
+         <button class="btn btn--sm btn--ghost" id="reopenEvent">Reopen the event</button>`
+      : `<p class="faint">Closes any open task, clears the board and puts every phone on its final placing.
+          The big screen switches to the podium. Apply the final points first.</p>
+         <button class="btn btn--pink" id="endEvent">End event &amp; show winners</button>`}
   </div>`;
 }
 
@@ -641,12 +771,11 @@ function wire() {
   });
   on('[data-rm]', 'click', e => removeParticipant(e.currentTarget.dataset.rm));
 
-  on('[data-host]', 'click', async e => {
-    const uid = e.currentTarget.dataset.host;
+  const toggleHost = async (uid) => {
     const u = S.users.find(x => x.id === uid);
     const isHost = S.hosts.includes(uid);
-    if (isHost && uid === S.user.uid && S.hosts.length === 1) {
-      return toast('That is the only host account — promote someone else first.', 'err');
+    if (isHost && S.hosts.length === 1) {
+      return toast('That is the only host — promote someone else first.', 'err');
     }
     if (!confirm(isHost
       ? `Remove host rights from ${u?.username || uid}?`
@@ -658,6 +787,12 @@ function wire() {
     } catch (err) {
       toast('Could not change host rights: ' + err.message, 'err');
     }
+  };
+  on('[data-unhost]', 'click', e => toggleHost(e.currentTarget.dataset.unhost));
+  $('#makeHost')?.addEventListener('click', () => {
+    const uid = $('#hostPick')?.value;
+    if (!uid) return toast('Pick an account first', 'err');
+    toggleHost(uid);
   });
 
   $('#howMany')?.addEventListener('input', e => {
@@ -763,6 +898,15 @@ function wire() {
   });
   $('#applyFin')?.addEventListener('click', () =>
     applyVotedRound(S.event.finalistTeamIds || [], countVotes(S.votes), FINAL_LADDER, 'Final'));
+  $('#endEvent')?.addEventListener('click', () => {
+    const unapplied = (S.event.finalistTeamIds || []).length && S.votes.length;
+    const warn = unapplied
+      ? 'End the event now?\n\nThere are final votes recorded — if you have not clicked "Apply final points" yet, do that first or the winner will be wrong.'
+      : 'End the event now? Players will see their final placing and the big screen switches to the podium.';
+    if (confirm(warn)) endEvent();
+  });
+  $('#reopenEvent')?.addEventListener('click', reopenEvent);
+
   $('#clearFin')?.addEventListener('click', () => {
     if (confirm('Delete all final images and votes?')) clearRound('final');
   });

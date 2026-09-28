@@ -2,9 +2,10 @@ import {
   db, doc, collection, onSnapshot, setDoc, getDoc, serverTimestamp, query, where
 } from './firebase.js';
 import { renderAuth, watchAuth, logout } from './auth.js';
-import { t, tr, lang, mountLangToggle } from './i18n.js';
+import { t, tr } from './i18n.js';
 import { $, esc, toast, fmtClock, toMs, teamColor, debounce, imageToDataUrl } from './util.js';
 import { rankTeams } from './scoring.js';
+import { SEMI, FINAL } from './content.js';
 
 const S = {
   user: null, eventId: null, event: null, me: null,
@@ -18,8 +19,6 @@ const root = () => $('#root');
 const stop = () => { S.unsubs.forEach(u => { try { u(); } catch {} }); S.unsubs = []; };
 
 // --------------------------------------------------------------- bootstrap --
-mountLangToggle($('#langToggle'));
-window.addEventListener('langchange', () => paint());
 
 $('#logoutBtn').addEventListener('click', async () => { stop(); await logout(); });
 
@@ -233,8 +232,9 @@ function paint() {
 
   const phase = S.event.phase;
   const headline =
-    phase === 'finale' ? t('finaleTitle').split('—')[0].trim() :
-    phase === 'semi' ? t('semiTitle').split('—')[0].trim() : t('task');
+    phase === 'done' ? t('endTitle') :
+    phase === 'finale' ? 'FINAL' :
+    phase === 'semi' ? 'SEMI-FINAL' : t('task');
 
   const html = `
     ${teamStrip()}
@@ -246,6 +246,7 @@ function paint() {
     <div id="tabBody">${
       S.tab === 'team' ? teamPanel() :
       S.tab === 'lb' ? leaderboardPanel() :
+      phase === 'done' ? endPanel() :
       phase === 'finale' ? finalePanel() :
       phase === 'semi' ? semiPanel() :
       taskPanel()
@@ -279,6 +280,16 @@ function teamStrip() {
 }
 
 // ------------------------------------------------------------- task panel ---
+// A numbered "How to play" block. Every task and both voted rounds get one —
+// people read three short lines on a phone; they do not read a paragraph.
+function steps(list) {
+  if (!Array.isArray(list) || !list.length) return '';
+  return `<div class="steps">
+    <h3 class="steps__title">${esc(t('howToPlay'))}</h3>
+    <ol>${list.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
+  </div>`;
+}
+
 function taskPanel() {
   const task = S.task;
   if (!task || task.status === 'locked') {
@@ -295,6 +306,7 @@ function taskPanel() {
       </div>
       <h2>${esc(tr(task.title))}</h2>
       <p class="muted" style="margin:0">${esc(tr(task.intro))}</p>
+      ${closed ? '' : steps(task.payload?.steps)}
       ${closed ? '' : `<p class="faint" style="margin:10px 0 0">${esc(t('sharedNote'))}</p>`}
     </div>`;
 
@@ -347,14 +359,15 @@ function golfBody(task) {
   const prompt = S.sub?.prompt || '';
   return `<div class="card stack">
     <div class="theme-banner" style="padding:16px">
-      <span class="faint">TARGET</span><b style="font-size:18px">${esc(tr(task.payload?.target))}</b>
+      <span class="faint">${esc(t('target'))}</span><b style="font-size:18px">${esc(tr(task.payload?.target))}</b>
     </div>
-    <p class="faint">${esc(tr(task.payload?.rules))}</p>
-    <label class="field"><span>${esc(t('prompt'))}</span>
-      <textarea id="fPrompt" data-field="prompt">${esc(prompt)}</textarea></label>
+    ${task.payload?.warning ? `<p class="warn">${esc(tr(task.payload.warning))}</p>` : ''}
+    <label class="field"><span>${esc(t('prompt'))} — the shorter the better</span>
+      <textarea id="fPrompt" data-field="prompt" placeholder="the exact text you typed into the AI">${esc(prompt)}</textarea></label>
     <p class="counter"><b id="charCount">${prompt.length}</b> ${esc(t('chars'))}</p>
     <label class="field"><span>${esc(t('output'))}</span>
-      <textarea id="fOutput" data-field="output">${esc(S.sub?.output || '')}</textarea></label>
+      <textarea id="fOutput" data-field="output" placeholder="paste the AI's reply here, exactly as it came back">${esc(S.sub?.output || '')}</textarea></label>
+    <p class="faint" style="margin:0">${esc(tr(task.payload?.rules))}</p>
   </div>`;
 }
 
@@ -364,7 +377,7 @@ function openBody(task) {
   return `<div class="card stack">
     <div class="itemchips">${chips}</div>
     ${task.payload?.scoring ? `<p class="faint" style="margin:0">${esc(tr(task.payload.scoring))}</p>` : ''}
-    <p class="faint">${esc(tr(task.payload?.hint))}</p>
+    ${task.payload?.hint ? `<p class="warn">${esc(tr(task.payload.hint))}</p>` : ''}
     <label class="field"><span>${esc(t('inventionName'))}</span>
       <input type="text" data-field="name" value="${esc(S.sub?.name || '')}"></label>
     <label class="field"><span>${esc(t('howItWorks'))}</span>
@@ -494,19 +507,27 @@ function semiPanel() {
   if (s.phase === 'creating') {
     if (!amIn) {
       return `<div class="card stack">
-        <h2 class="center">${esc(t('semiTitle'))}</h2>
+        <h2 class="center">${esc(SEMI.title)}</h2>
         ${picture}
         <p class="center muted">${esc(t('semiNotIn'))}</p>
         <div class="row" style="justify-content:center"><span class="timer" id="timer">–</span></div>
       </div>`;
     }
+    const mine = S.mySemi || {};
     return `<div class="card stack">
       <div class="row"><span class="pill pill--live">${esc(t('semiReference'))}</span>
         <span class="grow"></span><span class="timer" id="timer">–</span></div>
       ${picture}
-      ${s.hint ? `<p class="faint">${esc(tr(s.hint))}</p>` : ''}
+      <p class="muted" style="margin:0">${esc(SEMI.intro)}</p>
+      ${steps(SEMI.steps)}
+      <p class="warn">${esc(SEMI.hint)}</p>
       <label class="field"><span>${esc(t('semiYourPrompt'))}</span>
-        <textarea id="semiPrompt" style="min-height:150px">${esc(S.mySemi?.prompt || '')}</textarea></label>
+        <textarea id="semiPrompt" style="min-height:130px"
+          placeholder="the prompt you think made the picture above">${esc(mine.prompt || '')}</textarea></label>
+      <label class="field"><span>${esc(t('semiYourImage'))}</span></label>
+      ${mine.image ? `<img class="preview" src="${esc(mine.image)}" alt="">` : ''}
+      <div class="drop" id="semiDrop">${esc(t('finaleUpload'))}</div>
+      <input type="file" accept="image/*" id="semiFile" class="hide">
       <button class="btn btn--wide btn--pink" id="semiSave">${esc(t('save'))}</button>
       <p class="faint center" style="margin:0">${esc(t('sharedNote'))}</p>
     </div>`;
@@ -516,14 +537,16 @@ function semiPanel() {
     const voting = s.phase === 'voting' && !amIn;
     return `<div class="card stack">
       <h2 class="center">${esc(voting ? t('semiVoteTitle') : t('finaleResults'))}</h2>
+      <p class="faint center" style="margin:0">${esc(t('semiOriginal'))}</p>
       ${picture}
       ${amIn && s.phase === 'voting' ? `<p class="center muted">${esc(t('semiNoSelfVote'))}</p>` : ''}
+      ${voting ? `<p class="center muted" style="margin:0">${esc(SEMI.voteHint)}</p>` : ''}
       ${semiEntriesList(voting)}
     </div>`;
   }
 
   return `<div class="card center stack">
-    <h2>${esc(t('semiTitle'))}</h2>
+    <h2>${esc(SEMI.title)}</h2>
     <p class="muted">${esc(t('semiWaiting'))}</p></div>`;
 }
 
@@ -541,6 +564,7 @@ function semiEntriesList(votable) {
           <b class="grow">${esc(byId[id]?.name || id)}</b>
           ${picked ? `<span class="pill pill--live">${esc(t('finaleVoteDone'))}</span>` : ''}
         </div>
+        ${e?.image ? `<img class="preview" src="${esc(e.image)}" alt="" style="margin-bottom:10px">` : ''}
         <p class="qitem__text" style="margin:0">${esc(e?.prompt || '…')}</p>
         ${votable ? `<button class="btn btn--sm btn--wide" style="margin-top:10px">${esc(picked ? t('finaleVoteDone') : t('semiVoteTitle'))}</button>` : ''}
       </div>`;
@@ -550,6 +574,30 @@ function semiEntriesList(votable) {
 
 function wireSemiPanel() {
   const box = root();
+
+  const drop = box.querySelector('#semiDrop');
+  const file = box.querySelector('#semiFile');
+  if (drop && file) {
+    drop.addEventListener('click', () => file.click());
+    file.addEventListener('change', async () => {
+      const f = file.files?.[0];
+      if (!f) return;
+      drop.textContent = t('uploading');
+      try {
+        const image = await imageToDataUrl(f);
+        await setDoc(doc(db, 'events', S.eventId, 'semi', S.me.teamId), {
+          teamId: S.me.teamId, image,
+          prompt: box.querySelector('#semiPrompt')?.value || '',
+          by: S.user.uid, byName: S.me.username || '', at: serverTimestamp()
+        }, { merge: true });
+        toast(t('saved'));
+      } catch (e) {
+        toast(e?.code === 'permission-denied' ? t('timeUp') : t('imageTooBig'), 'err');
+      } finally {
+        drop.textContent = t('finaleUpload');
+      }
+    });
+  }
 
   const save = box.querySelector('#semiSave');
   if (save) save.addEventListener('click', async () => {
@@ -581,6 +629,37 @@ function wireSemiPanel() {
   });
 }
 
+// -------------------------------------------------------------- the end ----
+function endPanel() {
+  const ranked = rankTeams(S.teams);
+  const mine = ranked.find(x => x.id === S.me.teamId);
+  const medal = (r) => (r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : '');
+  return `<div class="card center stack">
+      <h2 style="font-size:26px">${esc(t('endTitle'))}</h2>
+      ${mine ? `<div class="theme-banner">
+        <span class="faint">${esc(t('endYourTeam'))}</span>
+        <b style="font-size:30px">${medal(mine.rank)} ${mine.rank}${ordinal(mine.rank)} ${esc(t('endPlace'))}</b>
+        <div style="margin-top:6px">${esc(mine.name || '')} · ${Number(mine.points || 0)} ${esc(t('points'))}</div>
+      </div>` : ''}
+      <p class="muted" style="margin:0">${esc(t('endThanks'))}</p>
+    </div>
+    <div class="card">
+      <h2>${esc(t('endStandings'))}</h2>
+      <div class="lb">
+        ${ranked.map(x => `<div class="lb__row ${x.id === S.me.teamId ? 'is-me' : ''}">
+          <div class="lb__rank">${medal(x.rank) || x.rank}</div>
+          <div class="lb__name"><span class="dot" style="background:${teamColor(x.id)}"></span><span>${esc(x.name || x.id)}</span></div>
+          <div class="lb__pts">${Number(x.points || 0)}</div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+function ordinal(n) {
+  if (n % 100 >= 11 && n % 100 <= 13) return 'th';
+  return ({ 1: 'st', 2: 'nd', 3: 'rd' })[n % 10] || 'th';
+}
+
 // ----------------------------------------------------------------- finale ---
 function finalePanel() {
   const f = S.event.finale || {};
@@ -592,18 +671,20 @@ function finalePanel() {
   if (f.phase === 'creating') {
     if (!amFinalist) {
       return `<div class="card stack">${theme}
-        <p class="center muted">${esc(t('finaleNotFinalist'))}</p>
+        <p class="center muted">${esc(FINAL.voterNote)}</p>
         <div class="row center" style="justify-content:center">
           <span class="timer" id="timer">–</span></div></div>`;
     }
     const mine = S.finaleEntries.find(x => x.id === S.me.teamId);
     return `<div class="card stack">${theme}
       <div class="row" style="justify-content:center"><span class="timer" id="timer">–</span></div>
+      <p class="muted" style="margin:0">${esc(FINAL.intro)}</p>
+      ${steps(FINAL.steps)}
       ${mine?.image ? `<img class="preview" src="${esc(mine.image)}" alt="">` : ''}
       <div class="drop" id="drop">${esc(t('finaleUpload'))}</div>
       <input type="file" accept="image/*" id="file" class="hide">
       <label class="field"><span>${esc(t('prompt'))}</span>
-        <textarea id="fPrompt2">${esc(mine?.prompt || '')}</textarea></label>
+        <textarea id="fPrompt2" placeholder="the prompt you used">${esc(mine?.prompt || '')}</textarea></label>
       <button class="btn btn--wide btn--pink" id="finaleSave">${esc(t('save'))}</button>
     </div>`;
   }
