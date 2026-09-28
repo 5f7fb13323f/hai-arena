@@ -5,8 +5,9 @@ const STRINGS = {
   login: 'Log in', register: 'Create account', logout: 'Log out',
   username: 'Username', password: 'Password', password2: 'Repeat password',
   haveAccount: 'I already have an account', needAccount: 'I need an account',
+  haveAccountAsk: 'Already have an account?', needAccountAsk: 'No account yet?',
   loggingIn: 'Signing in…',
-  pickUsername: 'Pick anything — your name, your nickname. You will need it again if you get logged out.',
+  pickUsername: 'Pick anything — your name or nickname. You will need it again if you get logged out.',
   errShort: 'Password needs at least 6 characters.',
   errMatch: 'The two passwords do not match.',
   errUser: 'Username must be 2–30 characters, letters and numbers.',
@@ -40,7 +41,7 @@ const STRINGS = {
   finaleVoteTitle: 'Vote for the best',
   finaleVoteDone: 'Vote counted',
   finaleVoteChange: 'You can change your vote until the host closes voting.',
-  finaleNoSelfVote: 'Finalists do not vote.',
+  finaleNoSelfVote: 'You can vote for any team except your own.',
   finaleWaiting: 'Waiting for the host…',
   finaleResults: 'Results',
   votes: 'votes',
@@ -48,13 +49,13 @@ const STRINGS = {
   imageTooBig: 'That image could not be processed. Try a smaller one.',
   uploading: 'Processing image…',
 
-  semiTitle: 'SEMI-FINAL — Reverse Prompt',
+  semiTitle: 'ROUND 5 — Reverse Prompt',
   semiReference: 'The image',
   semiYourPrompt: 'Your reconstruction of the prompt',
   semiYourImage: 'The image your prompt produced',
   semiNotIn: 'You are the jury. Study the image — you will judge the reconstructions.',
   semiVoteTitle: 'Which prompt made this image?',
-  semiNoSelfVote: 'Semi-finalists do not vote.',
+  semiNoSelfVote: 'You can vote for any team except your own.',
   semiWaiting: 'Waiting for the host…',
   semiOriginal: 'The original',
 
@@ -77,6 +78,9 @@ const STRINGS = {
   screenWaiting: 'Waiting for the next task',
   screenPrep: 'Teams are naming themselves',
   screenAnswered: 'answered',
+  screenSubmitted: 'submitted',
+  screenCorrect: 'Correct answers',
+  screenSlide: 'Slide',
   screenOpen: 'OPEN', screenClosed: 'CLOSED'
 };
 

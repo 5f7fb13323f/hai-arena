@@ -520,21 +520,11 @@ function wireTeamPanel() {
 // ------------------------------------------------------------- semi-final ---
 function semiPanel() {
   const s = S.event.semi || {};
-  const semis = S.event.semifinalistTeamIds || [];
-  const amIn = semis.includes(S.me.teamId);
   const picture = S.semiImage
     ? `<img class="preview" src="${esc(S.semiImage)}" alt="">`
     : `<div class="drop" style="cursor:default">${esc(t('semiWaiting'))}</div>`;
 
   if (s.phase === 'creating') {
-    if (!amIn) {
-      return `<div class="card stack">
-        <h2 class="center">${esc(SEMI.title)}</h2>
-        ${picture}
-        <p class="center muted">${esc(t('semiNotIn'))}</p>
-        <div class="row" style="justify-content:center"><span class="timer" id="timer">–</span></div>
-      </div>`;
-    }
     const mine = S.mySemi || {};
     return `<div class="card stack">
       <div class="row"><span class="pill pill--live">${esc(t('semiReference'))}</span>
@@ -556,12 +546,12 @@ function semiPanel() {
   }
 
   if (s.phase === 'voting' || s.phase === 'results') {
-    const voting = s.phase === 'voting' && !amIn;
+    const voting = s.phase === 'voting';
     return `<div class="card stack">
       <h2 class="center">${esc(voting ? t('semiVoteTitle') : t('finaleResults'))}</h2>
       <p class="faint center" style="margin:0">${esc(t('semiOriginal'))}</p>
       ${picture}
-      ${amIn && s.phase === 'voting' ? `<p class="center muted">${esc(t('semiNoSelfVote'))}</p>` : ''}
+      ${s.phase === 'voting' ? `<p class="center faint" style="margin:0">${esc(t('semiNoSelfVote'))}</p>` : ''}
       ${voting ? `<p class="center muted" style="margin:0">${esc(SEMI.voteHint)}</p>` : ''}
       ${semiEntriesList(voting)}
     </div>`;
@@ -574,10 +564,11 @@ function semiPanel() {
 
 function semiEntriesList(votable) {
   const byId = Object.fromEntries(S.teams.map(x => [x.id, x]));
-  const order = S.event.semifinalistTeamIds || [];
+  const order = S.teams.map(x => x.id).filter(id => id !== S.me.teamId);
   return `<div class="stack">
     ${order.map(id => {
       const e = S.semiEntries.find(x => x.id === id);
+      if (!e) return '';
       const picked = S.mySemiVote === id;
       return `<div class="qitem ${picked ? 'is-picked' : ''}"
            ${votable ? `data-semivote="${esc(id)}" style="cursor:pointer;border-color:${picked ? 'var(--green)' : ''}"` : ''}>
@@ -606,7 +597,7 @@ function wireSemiPanel() {
       if (!f) return;
       drop.textContent = t('uploading');
       try {
-        const image = await imageToDataUrl(f);
+        const image = await imageToDataUrl(f, 900, 220_000);
         await setDoc(doc(db, 'events', S.eventId, 'semi', S.me.teamId), {
           teamId: S.me.teamId, image,
           prompt: box.querySelector('#semiPrompt')?.value || '',
@@ -685,18 +676,10 @@ function ordinal(n) {
 // ----------------------------------------------------------------- finale ---
 function finalePanel() {
   const f = S.event.finale || {};
-  const finalists = S.event.finalistTeamIds || [];
-  const amFinalist = finalists.includes(S.me.teamId);
   const theme = `<div class="theme-banner"><span class="faint">${esc(t('finaleTheme'))}</span>
       <b>${esc(tr(f.theme) || '…')}</b></div>`;
 
   if (f.phase === 'creating') {
-    if (!amFinalist) {
-      return `<div class="card stack">${theme}
-        <p class="center muted">${esc(FINAL.voterNote)}</p>
-        <div class="row center" style="justify-content:center">
-          <span class="timer" id="timer">–</span></div></div>`;
-    }
     const mine = S.finaleEntries.find(x => x.id === S.me.teamId);
     return `<div class="card stack">${theme}
       <div class="row" style="justify-content:center"><span class="timer" id="timer">–</span></div>
@@ -712,12 +695,9 @@ function finalePanel() {
   }
 
   if (f.phase === 'voting') {
-    if (amFinalist) {
-      return `<div class="card stack">${theme}
-        <p class="center muted">${esc(t('finaleNoSelfVote'))}</p>${entriesGrid(false)}</div>`;
-    }
     return `<div class="card stack">${theme}
       <h2 class="center">${esc(t('finaleVoteTitle'))}</h2>
+      <p class="center faint" style="margin:0">${esc(t('finaleNoSelfVote'))}</p>
       ${entriesGrid(true)}
       <p class="center faint">${esc(S.myVote ? t('finaleVoteChange') : '')}</p>
     </div>`;
@@ -735,8 +715,7 @@ function finalePanel() {
 
 function entriesGrid(votable) {
   const byId = Object.fromEntries(S.teams.map(x => [x.id, x]));
-  const order = (S.event.finalistTeamIds || []);
-  const entries = order.map(id => S.finaleEntries.find(e => e.id === id) || { id });
+  const entries = S.finaleEntries.filter(e => !votable || e.id !== S.me.teamId);
   return `<div class="entries">
     ${entries.map(e => `
       <div class="entry ${S.myVote === e.id ? 'is-picked' : ''}" ${votable ? `data-vote="${esc(e.id)}" style="cursor:pointer"` : ''}>
@@ -775,7 +754,7 @@ function wireFinalePanel() {
       if (!f) return;
       drop.textContent = t('uploading');
       try {
-        const image = await imageToDataUrl(f);
+        const image = await imageToDataUrl(f, 900, 220_000);
         await setDoc(doc(db, 'events', S.eventId, 'finale', S.me.teamId), {
           image, teamId: S.me.teamId, at: serverTimestamp(),
           prompt: box.querySelector('#fPrompt2')?.value || ''

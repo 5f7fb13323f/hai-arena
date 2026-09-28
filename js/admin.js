@@ -8,9 +8,6 @@ import { TASKS, teamName, FINALE_THEMES, RUN_OF_SHOW, SEMI } from './content.js'
 import { gradeTask, totalsFromSubmissions, rankTeams, makeTeams, awardByVotes } from './scoring.js';
 import { createAccounts, testerNames } from './bulk.js';
 
-const SEMI_LADDER = [20, 14, 10, 7, 5];
-const FINAL_LADDER = [30, 20, 10, 5];
-
 const S = {
   user: null, events: [], eid: null, event: null,
   users: [], hosts: [], participants: [], teams: [], tasks: [], subs: [],
@@ -222,11 +219,14 @@ const closePrep = () => setEvent({ phase: 'lobby' }).then(() => toast('Preparati
 
 async function openTask(taskId, minutes) {
   const endsAt = new Date(Date.now() + Math.max(1, minutes) * 60000);
+  // Scoring is elastic: this task is worth one point per person in the room,
+  // fixed at the moment it opens so later arrivals cannot change it.
+  const maxPoints = Math.max(1, S.participants.length);
   const b = writeBatch(db);
-  b.set(doc(db, 'events', S.eid, 'tasks', taskId), { status: 'open', endsAt }, { merge: true });
+  b.set(doc(db, 'events', S.eid, 'tasks', taskId), { status: 'open', endsAt, maxPoints }, { merge: true });
   b.set(doc(db, 'events', S.eid), { activeTaskId: taskId, phase: 'part1' }, { merge: true });
   await b.commit();
-  toast('Task open');
+  toast(`Task open — worth up to ${maxPoints} points`);
 }
 
 const closeTask = (taskId) =>
@@ -298,8 +298,8 @@ const countVotes = (rows) => {
 // awarded, take that back off, then apply the current standings — so pressing
 // the button again after a few late votes corrects the scores instead of
 // paying everybody twice.
-async function applyVotedRound(field, teamIds, counts, ladder, label) {
-  const { ranked, award } = awardByVotes(teamIds, counts, ladder);
+async function applyVotedRound(field, teamIds, counts, label) {
+  const { ranked, award } = awardByVotes(teamIds, counts);
   const previous = S.event[field] || {};
 
   const bonusByTeam = Object.fromEntries(S.teams.map(x => [x.id, Number(x.bonus || 0)]));
@@ -378,6 +378,24 @@ async function deleteEvent(eid) {
 const showcase = (taskId) =>
   setEvent({ showcaseTaskId: taskId }).then(() =>
     toast(taskId ? 'Answers are on the big screen' : 'Big screen back to the leaderboard'));
+
+// Removes the Firestore record for every account that is not a host. It does
+// NOT remove the logins themselves — only the Firebase console can do that —
+// but without a record an account cannot appear in a roster or be auto-joined.
+async function purgeNonHostAccounts() {
+  const victims = S.users.filter(u => !S.hosts.includes(u.id));
+  if (!victims.length) return toast('Nothing to remove — every account is a host', 'err');
+
+  for (let i = 0; i < victims.length; i += 200) {
+    const b = writeBatch(db);
+    for (const u of victims.slice(i, i + 200)) {
+      b.delete(doc(db, 'users', u.id));
+      if (S.eid) b.delete(doc(db, 'events', S.eid, 'participants', u.id));
+    }
+    await b.commit();
+  }
+  toast(`${victims.length} account record(s) removed — their logins still exist in Firebase Auth`);
+}
 
 async function endEvent() {
   const open = S.tasks.find(x => x.status === 'open');
@@ -554,6 +572,14 @@ function accountsCard() {
       <button class="btn btn--sm btn--ghost" id="makeHost">Make host</button>
     </div>
     <p class="faint" style="margin:8px 0 0">A host can run the event and promote other hosts.</p>
+
+    <h2 style="font-size:16px;margin:18px 0 6px">Clear out accounts</h2>
+    <button class="btn btn--sm btn--danger" id="purgeUsers"
+      ${S.users.length > S.hosts.length ? '' : 'disabled'}>
+      Remove all non-host accounts (${Math.max(0, S.users.length - S.hosts.length)})</button>
+    <p class="faint" style="margin:8px 0 0">Wipes every non-host account record, so testers stop
+      appearing in the roster and stop being auto-joined. The logins themselves survive —
+      delete those under Authentication in the Firebase console.</p>
   </div>`;
 }
 
@@ -649,12 +675,14 @@ function gradingCard() {
     ${task.type === 'open' ? `<p class="warn">Type a score from 0 to ${task.points?.max || 10} in each
         team's box. Nothing is added to the leaderboard until you press
         <b>Grade &amp; publish</b> — that applies every box at once.</p>` : ''}
-    ${task.type === 'open' ? `<div class="row" style="margin-bottom:10px">
+    ${true ? `<div class="row" style="margin-bottom:10px">
         ${S.event.showcaseTaskId === taskId
           ? `<button class="btn btn--sm" data-showcase="">Hide from big screen</button>
              <span class="faint">The answers are on the big screen now.</span>`
-          : `<button class="btn btn--sm btn--ghost" data-showcase="${esc(taskId)}">Show answers on big screen</button>
-             <span class="faint">Put every team's invention up so the room can read them.</span>`}
+          : `<button class="btn btn--sm btn--ghost" data-showcase="${esc(taskId)}">Show on big screen</button>
+             <span class="faint">${task.type === 'quiz-single' || task.type === 'quiz-multi'
+               ? 'Puts the questions up with the right answers marked, so you can walk the room through them.'
+               : "Puts every team's answer up so the room can read them."}</span>`}
       </div>` : ''}
     <div class="scroll"><table><thead><tr><th>Team</th><th>Answer</th><th>Score</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="3" class="faint">nothing yet</td></tr>'}</tbody></table></div>
@@ -667,53 +695,51 @@ function gradingCard() {
 
 function semiCard() {
   const s = S.event.semi || {};
-  const ids = S.event.semifinalistTeamIds || [];
   const counts = countVotes(S.semivotes);
   const name = id => S.teams.find(x => x.id === id)?.name || id;
+  const ranked = rankTeams(S.teams).map(x => ({ ...x, votes: counts[x.id] || 0 }))
+    .sort((a, b) => b.votes - a.votes);
 
   return `<div class="card">
-    <h2>Semi-final — Reverse Prompt</h2>
-    <p class="faint">Generate one image with Copilot beforehand, upload it here, keep your prompt secret.
-      Ideas: ${esc(SEMI.imageIdeas[0])}</p>
+    <h2>Round 5 — Reverse Prompt</h2>
+    <p class="faint">Every team plays. Generate one image with Copilot beforehand, upload it
+      here, keep your prompt secret. Ideas: ${esc(SEMI.imageIdeas[0])}</p>
 
     <div class="row">
-      <button class="btn btn--sm btn--ghost" id="semiPick">Pick TOP 5</button>
-      <span class="faint grow">${ids.map(id => esc(name(id))).join(' · ') || 'no semi-finalists yet'}</span>
-    </div>
-
-    <div class="row" style="margin-top:10px">
       <button class="btn btn--sm" id="semiImgBtn">${S.semiImage ? 'Replace image' : 'Upload image'}</button>
       <input type="file" accept="image/*" id="semiImgFile" class="hide">
       ${S.semiImage ? `<img src="${esc(S.semiImage)}" alt="" style="height:54px;border-radius:8px;border:1px solid var(--line)">` : '<span class="faint">no image yet</span>'}
     </div>
 
     <div class="row" style="margin-top:10px">
-      <span class="faint">Minutes</span><input type="number" id="semiMin" value="5" min="1" max="15">
+      <button class="btn btn--sm btn--ghost" id="semiStart">Make this round live</button>
+      <span class="faint">Switches every phone to this round.</span>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <span class="faint">Minutes</span><input type="number" id="semiMin" value="6" min="1" max="15">
       <button class="btn btn--sm btn--pink" data-sphase="creating">Start</button>
       <button class="btn btn--sm" data-sphase="voting">Open voting</button>
       <button class="btn btn--sm btn--ghost" data-sphase="results">Results</button>
       <button class="btn btn--sm btn--ghost" data-sphase="idle">Reset</button>
     </div>
-    <p class="faint" style="margin-top:10px">phase: <b>${esc(s.phase || 'idle')}</b> · entries ${S.semi.length} · votes ${S.semivotes.length}
+    <p class="faint" style="margin-top:10px">phase: <b>${esc(s.phase || 'idle')}</b> ·
+      entries ${S.semi.length} / ${S.teams.length} · votes ${S.semivotes.length}
       ${S.event.semiAward ? '· <b style="color:var(--green)">points applied</b>' : '· votes are counted but not yet scored'}</p>
 
-    <div class="lb">
-      ${ids.map(id => {
-        const e = S.semi.find(x => x.id === id);
-        return `<div class="lb__row" style="grid-template-columns:1fr auto">
-          <div style="min-width:0">
-            <div class="lb__name"><span class="dot" style="background:${teamColor(id)}"></span>
-              <span>${esc(name(id))}</span></div>
-            <div class="faint" style="white-space:pre-wrap">${esc((e?.prompt || '—').slice(0, 300))}</div>
-          </div>
-          <div class="lb__pts">${counts[id] || 0}</div>
-        </div>`;
-      }).join('')}
+    <div class="scroll" style="max-height:220px">
+      <table><tbody>
+      ${ranked.map(x => `<tr>
+        <td><span class="dot" style="background:${teamColor(x.id)};display:inline-block;margin-right:6px"></span>${esc(x.name || x.id)}</td>
+        <td class="faint">${S.semi.some(e => e.id === x.id) ? 'submitted' : '—'}</td>
+        <td class="lb__pts" style="text-align:right">${x.votes}</td>
+      </tr>`).join('')}
+      </tbody></table>
     </div>
 
     <div class="row" style="margin-top:12px">
-      <button class="btn btn--sm" id="semiApply">${S.event.semiAward ? 'Re-apply' : 'Apply'} semi points (20/14/10/7/5)</button>
-      <button class="btn btn--sm btn--ghost" id="semiToFinal">Send top 3 to the final</button>
+      <button class="btn btn--sm" id="semiApply">${S.event.semiAward ? 'Re-apply' : 'Apply'} points (1 vote = 1 point)</button>
+      <button class="btn btn--sm btn--ghost" id="toFinal">Move on to the final</button>
       <button class="btn btn--sm btn--danger" id="semiClear">Clear entries &amp; votes</button>
     </div>
   </div>`;
@@ -722,39 +748,40 @@ function semiCard() {
 function finaleCard() {
   const f = S.event.finale || {};
   const counts = countVotes(S.votes);
-  const ids = S.event.finalistTeamIds || [];
-  const name = id => S.teams.find(x => x.id === id)?.name || id;
+  const ranked = rankTeams(S.teams).map(x => ({ ...x, votes: counts[x.id] || 0 }))
+    .sort((a, b) => b.votes - a.votes);
 
   return `<div class="card">
     <h2>Final — Prompt Battle</h2>
-    <div class="row">
-      <button class="btn btn--sm btn--ghost" data-fin="2">Top 2 on points</button>
-      <button class="btn btn--sm btn--ghost" data-fin="3">Top 3 on points</button>
-      <span class="faint grow">${ids.map(id => esc(name(id))).join(' · ') || 'no finalists yet'}</span>
-    </div>
+    <p class="faint">Every team plays. Pick a theme, reveal it when the timer starts.</p>
     <label class="field"><span>Theme</span>
       <select id="themeSel">
         <option value="">— pick a theme —</option>
         ${FINALE_THEMES.map((th, i) => `<option value="${i}" ${themeText(f.theme) === th ? 'selected' : ''}>${esc(th)}</option>`).join('')}
       </select></label>
     <div class="row" style="margin-top:12px">
-      <span class="faint">Minutes</span><input type="number" id="fmin" value="3" min="1" max="15">
+      <span class="faint">Minutes</span><input type="number" id="fmin" value="4" min="1" max="15">
       <button class="btn btn--sm btn--pink" data-phase="creating">Start creating</button>
       <button class="btn btn--sm" data-phase="voting">Open voting</button>
       <button class="btn btn--sm btn--ghost" data-phase="results">Show results</button>
       <button class="btn btn--sm btn--ghost" data-phase="idle">Reset phase</button>
     </div>
-    <p class="faint" style="margin-top:10px">phase: <b>${esc(f.phase || 'idle')}</b> · entries ${S.finale.length} · votes ${S.votes.length}
+    <p class="faint" style="margin-top:10px">phase: <b>${esc(f.phase || 'idle')}</b> ·
+      entries ${S.finale.length} / ${S.teams.length} · votes ${S.votes.length}
       ${S.event.finalAward ? '· <b style="color:var(--green)">points applied</b>' : '· votes are counted but not yet scored'}</p>
-    <div class="lb">
-      ${ids.map(id => `<div class="lb__row">
-        <div class="lb__rank"></div>
-        <div class="lb__name"><span class="dot" style="background:${teamColor(id)}"></span>
-          <span>${esc(name(id))}</span></div>
-        <div class="lb__pts">${counts[id] || 0}</div></div>`).join('')}
+
+    <div class="scroll" style="max-height:220px">
+      <table><tbody>
+      ${ranked.map(x => `<tr>
+        <td><span class="dot" style="background:${teamColor(x.id)};display:inline-block;margin-right:6px"></span>${esc(x.name || x.id)}</td>
+        <td class="faint">${S.finale.some(e => e.id === x.id) ? 'submitted' : '—'}</td>
+        <td class="lb__pts" style="text-align:right">${x.votes}</td>
+      </tr>`).join('')}
+      </tbody></table>
     </div>
+
     <div class="row" style="margin-top:12px">
-      <button class="btn btn--sm" id="applyFin">${S.event.finalAward ? 'Re-apply' : 'Apply'} final points (30/20/10)</button>
+      <button class="btn btn--sm" id="applyFin">${S.event.finalAward ? 'Re-apply' : 'Apply'} points (1 vote = 1 point)</button>
       <button class="btn btn--sm btn--danger" id="clearFin">Clear entries &amp; votes</button>
     </div>
   </div>`;
@@ -840,6 +867,11 @@ function wire() {
     }
   };
   on('[data-unhost]', 'click', e => toggleHost(e.currentTarget.dataset.unhost));
+  $('#purgeUsers')?.addEventListener('click', () => {
+    const n = S.users.length - S.hosts.length;
+    if (!confirm(`Remove ${n} non-host account record(s)?\n\nHosts are kept. This does not delete the logins in Firebase Authentication, so those people could register again — but they will disappear from the roster and stop being auto-joined.\n\nThis cannot be undone.`)) return;
+    purgeNonHostAccounts();
+  });
   $('#makeHost')?.addEventListener('click', () => {
     const uid = $('#hostPick')?.value;
     if (!uid) return toast('Pick an account first', 'err');
@@ -900,11 +932,8 @@ function wire() {
   on('.bonus', 'change', e => setTeamBonus(e.currentTarget.dataset.team, Number(e.currentTarget.value) || 0));
 
   // ---- semi-final
-  $('#semiPick')?.addEventListener('click', async () => {
-    const top = rankTeams(S.teams).slice(0, 5).map(x => x.id);
-    await setEvent({ semifinalistTeamIds: top, phase: 'semi' });
-    toast('TOP 5 locked in');
-  });
+  $('#semiStart')?.addEventListener('click', () =>
+    setEvent({ phase: 'semi' }).then(() => toast('Round 5 is live for every team')));
   $('#semiImgBtn')?.addEventListener('click', () => $('#semiImgFile').click());
   $('#semiImgFile')?.addEventListener('change', async e => {
     const f = e.target.files?.[0];
@@ -918,25 +947,16 @@ function wire() {
     setEvent({ semi: patch, phase: phase === 'idle' ? 'part1' : 'semi' });
   });
   $('#semiApply')?.addEventListener('click', () =>
-    applyVotedRound('semiAward', S.event.semifinalistTeamIds || [], countVotes(S.semivotes), SEMI_LADDER, 'Semi-final'));
-  $('#semiToFinal')?.addEventListener('click', async () => {
-    const counts = countVotes(S.semivotes);
-    const { ranked } = awardByVotes(S.event.semifinalistTeamIds || [], counts, SEMI_LADDER);
-    const top = ranked.slice(0, 3).map(r => r.id);
-    await setEvent({ finalistTeamIds: top, phase: 'finale', finale: { ...(S.event.finale || {}), phase: 'idle' } });
-    toast('Finalists set from the semi-final vote');
-  });
+    applyVotedRound('semiAward', S.teams.map(x => x.id), countVotes(S.semivotes), 'Round 5'));
+  $('#toFinal')?.addEventListener('click', () =>
+    setEvent({ phase: 'finale', finale: { ...(S.event.finale || {}), phase: 'idle' } })
+      .then(() => toast('Moved on to the final — everyone plays')));
   $('#semiClear')?.addEventListener('click', () => {
     if (confirm('Delete all semi-final entries and votes?')) clearRound('semi');
   });
 
   // ---- final
-  on('[data-fin]', 'click', async e => {
-    const n = Number(e.currentTarget.dataset.fin);
-    const top = rankTeams(S.teams).slice(0, n).map(x => x.id);
-    await setEvent({ finalistTeamIds: top, phase: 'finale' });
-    toast('Finalists set on points');
-  });
+
   $('#themeSel')?.addEventListener('change', e => {
     const i = e.target.value;
     setEvent({ finale: { ...(S.event.finale || {}), theme: i === '' ? null : FINALE_THEMES[Number(i)] } });
@@ -948,7 +968,7 @@ function wire() {
     setEvent({ finale: patch, phase: phase === 'idle' ? 'part1' : 'finale' });
   });
   $('#applyFin')?.addEventListener('click', () =>
-    applyVotedRound('finalAward', S.event.finalistTeamIds || [], countVotes(S.votes), FINAL_LADDER, 'Final'));
+    applyVotedRound('finalAward', S.teams.map(x => x.id), countVotes(S.votes), 'Final'));
   $('#endEvent')?.addEventListener('click', () => {
     const unapplied = (S.event.finalistTeamIds || []).length && S.votes.length;
     const warn = unapplied

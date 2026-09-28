@@ -8,7 +8,8 @@ import { APP_TITLE } from './firebase-config.js';
 const S = {
   user: null, admin: false, eid: null, event: null,
   teams: [], participants: [], task: null, finale: [], votes: [],
-  semi: [], semivotes: [], semiImage: null, subs: [], joinUrl: ''
+  semi: [], semivotes: [], semiImage: null, subs: [], keys: {},
+  slide: 0, joinUrl: ''
 };
 const root = () => $('#root');
 let unsubs = [];
@@ -64,6 +65,9 @@ function attach(eid) {
     S.semiImage = s.exists() ? s.data().image : null; paint();
   }, () => {}));
   if (S.admin) {
+    unsubs.push(onSnapshot(collection(db, ...b, 'keys'), qs => {
+      S.keys = Object.fromEntries(qs.docs.map(d => [d.id, d.data()])); paint();
+    }, () => {}));
     unsubs.push(onSnapshot(collection(db, ...b, 'votes'), qs => {
       S.votes = qs.docs.map(d => ({ id: d.id, ...d.data() })); paint();
     }));
@@ -107,6 +111,43 @@ function paint() {
   tick();
 }
 
+// 16 tiles a slide, advancing every 10 seconds, sliding horizontally.
+const GALLERY_PER_SLIDE = 16;
+
+function gallery(entries, counts, showVotes) {
+  const byId = Object.fromEntries(S.teams.map(x => [x.id, x]));
+  const slides = [];
+  for (let i = 0; i < entries.length; i += GALLERY_PER_SLIDE) {
+    slides.push(entries.slice(i, i + GALLERY_PER_SLIDE));
+  }
+  if (!slides.length) return `<div class="card center muted">Nothing submitted yet.</div>`;
+  const index = S.slide % slides.length;
+
+  return `
+    <div class="gallery" data-slides="${slides.length}">
+      <div class="gallery__track" style="width:${slides.length * 100}%;
+           transform:translateX(-${index * (100 / slides.length)}%)">
+        ${slides.map(slide => `<div class="gallery__slide" style="width:${100 / slides.length}%">
+          <div class="gallery__grid">
+            ${slide.map(e => `<figure class="tile">
+              ${e.image
+                ? `<img src="${esc(e.image)}" alt="">`
+                : `<div class="tile__blank">…</div>`}
+              <figcaption>
+                <span class="dot" style="background:${teamColor(e.id)}"></span>
+                <span class="tile__name">${esc(byId[e.id]?.name || e.id)}</span>
+                ${showVotes ? `<span class="tile__votes">${counts[e.id] || 0}</span>` : ''}
+              </figcaption>
+            </figure>`).join('')}
+          </div>
+        </div>`).join('')}
+      </div>
+      ${slides.length > 1 ? `<div class="gallery__dots">
+        ${slides.map((_, i) => `<span class="${i === index ? 'is-on' : ''}"></span>`).join('')}
+      </div>` : ''}
+    </div>`;
+}
+
 function podiumView() {
   const ranked = rankTeams(S.teams);
   const top = ranked.slice(0, 3);
@@ -147,44 +188,38 @@ function podiumView() {
 function semiView() {
   const s = S.event.semi || {};
   const c = counts(S.semivotes);
-  const ids = S.event.semifinalistTeamIds || [];
-  const byId = Object.fromEntries(S.teams.map(x => [x.id, x]));
-  const showVotes = S.admin && (s.phase === 'voting' || s.phase === 'results');
-  const ranked = ids.map(id => ({ id, v: c[id] || 0 })).sort((a, b) => b.v - a.v);
-  const winner = s.phase === 'results' && ranked.length ? ranked[0] : null;
   const creating = s.phase === 'creating';
+  const showVotes = S.admin && (s.phase === 'voting' || s.phase === 'results');
+  const entries = S.semi.slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  const ranked = entries.map(e => ({ id: e.id, v: c[e.id] || 0 })).sort((a, b) => b.v - a.v);
+  const winner = s.phase === 'results' && ranked.length ? ranked[0] : null;
+  const byId = Object.fromEntries(S.teams.map(x => [x.id, x]));
+
+  if (creating) {
+    return `
+      <div class="statusbar">
+        <span class="pill pill--live">${esc(t('semiTitle'))}</span>
+        <span class="grow"></span>
+        <span class="pill">${S.semi.length} / ${S.teams.length} ${esc(t('screenSubmitted'))}</span>
+        <span class="timer" id="timer">–</span>
+      </div>
+      <div class="card center">
+        ${S.semiImage
+          ? `<img src="${esc(S.semiImage)}" alt="" style="max-width:min(900px,100%);max-height:62vh;border-radius:14px">`
+          : `<div class="drop" style="cursor:default">${esc(t('semiWaiting'))}</div>`}
+      </div>`;
+  }
 
   return `
-    <div class="center stack" style="margin-bottom:18px">
+    <div class="statusbar">
       <span class="pill pill--live">${esc(t('semiTitle'))}</span>
-      ${creating ? `<div><span class="timer" id="timer">–</span></div>` : ''}
-      ${winner ? `<h1 style="color:var(--green)">${esc(t('winner'))}: ${esc(byId[winner.id]?.name || winner.id)}</h1>` : ''}
+      ${winner ? `<b style="margin-left:10px;color:var(--green);font-size:clamp(16px,1.6vw,26px)">
+        ${esc(t('winner'))}: ${esc(byId[winner.id]?.name || winner.id)}</b>` : ''}
+      <span class="grow"></span>
+      ${S.semiImage ? `<img src="${esc(S.semiImage)}" alt="" style="height:52px;border-radius:8px;border:1px solid var(--line)" title="the original">` : ''}
+      <span class="pill">${S.semivotes.length} ${esc(t('votes'))}</span>
     </div>
-    <div class="screen-grid">
-      <div class="card">
-        ${S.semiImage
-          ? `<img src="${esc(S.semiImage)}" alt="" style="width:100%;border-radius:12px;display:block">`
-          : `<div class="drop" style="cursor:default">${esc(t('semiWaiting'))}</div>`}
-      </div>
-      <div class="card stack">
-        <h2>${esc(creating ? t('semiReference') : t('semiVoteTitle'))}</h2>
-        ${creating
-          ? `<p class="muted" style="font-size:20px">${esc(ids.map(id => byId[id]?.name || id).join(' · '))}</p>`
-          : ids.map(id => {
-              const e = S.semi.find(x => x.id === id);
-              return `<div class="qitem ${winner?.id === id ? 'is-picked' : ''}"
-                   style="${winner?.id === id ? 'border-color:var(--green)' : ''}">
-                <div class="row" style="margin-bottom:6px">
-                  <span class="dot" style="background:${teamColor(id)}"></span>
-                  <b class="grow" style="font-size:19px">${esc(byId[id]?.name || id)}</b>
-                  ${showVotes ? `<span class="entry__votes">${c[id] || 0}</span>` : ''}
-                </div>
-                ${e?.image ? `<img src="${esc(e.image)}" alt="" style="width:100%;border-radius:10px;margin-bottom:8px;display:block">` : ''}
-                <div style="line-height:1.5">${esc((e?.prompt || '…').slice(0, 320))}</div>
-              </div>`;
-            }).join('')}
-      </div>
-    </div>`;
+    ${gallery(entries, c, showVotes)}`;
 }
 
 function answeredTeams() {
@@ -251,10 +286,44 @@ function mainView() {
     </div>`;
 }
 
+// A quiz, marked up with the right answers, for walking the room through it.
+function reviewView(task) {
+  const key = S.keys[task.id] || {};
+  const items = task.payload?.items || [];
+  const single = task.type === 'quiz-single';
+
+  return `
+    <div class="statusbar">
+      <span class="pill pill--live">${esc(t('screenCorrect'))}</span>
+      <b style="margin-left:10px;font-size:clamp(15px,1.4vw,22px)">${esc(tr(task.title))}</b>
+      <span class="grow"></span>
+      ${task.maxPoints ? `<span class="pill">worth up to ${Number(task.maxPoints)} points</span>` : ''}
+    </div>
+    <div class="review">
+      ${items.map((item, i) => {
+        const right = single ? key.answers?.[item.id] : null;
+        const isFalse = !single && (key.falseIds || []).includes(item.id);
+        const verdict = single
+          ? (right || '').toUpperCase()
+          : (isFalse ? 'FALSE' : 'TRUE');
+        const highlight = single || isFalse;
+        return `<div class="review__item ${highlight ? 'review__item--flag' : ''}">
+          <div class="row" style="margin-bottom:6px">
+            <span class="mono" style="color:var(--ink-faint)">${String(i + 1).padStart(2, '0')}</span>
+            <span class="pill ${single ? 'pill--live' : (isFalse ? 'pill--closed' : '')}">${esc(verdict)}</span>
+          </div>
+          <div class="review__text">${esc(tr(item.text))}</div>
+          ${key.notes?.[item.id] ? `<div class="review__note">${esc(tr(key.notes[item.id]))}</div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
 // Everyone's answers to an open-ended task, up on the wall to be read out.
 function showcaseView() {
   const taskId = S.event.showcaseTaskId;
   const task = S.task && S.task.id === taskId ? S.task : null;
+  if (task && (task.type === 'quiz-single' || task.type === 'quiz-multi')) return reviewView(task);
   const byId = Object.fromEntries(S.teams.map(x => [x.id, x]));
   const rows = S.subs
     .filter(x => x.taskId === taskId && (x.name || x.text))
@@ -283,37 +352,37 @@ function showcaseView() {
 function finaleView() {
   const f = S.event.finale || {};
   const c = counts(S.votes);
-  const finalists = S.event.finalistTeamIds || [];
-  const byId = Object.fromEntries(S.teams.map(x => [x.id, x]));
+  const creating = f.phase === 'creating';
   const showVotes = S.admin && (f.phase === 'voting' || f.phase === 'results');
-  const ranked = finalists.map(id => ({ id, v: c[id] || 0 })).sort((a, b) => b.v - a.v);
+  const entries = S.finale.slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  const ranked = entries.map(e => ({ id: e.id, v: c[e.id] || 0 })).sort((a, b) => b.v - a.v);
   const winner = f.phase === 'results' && ranked.length ? ranked[0] : null;
+  const byId = Object.fromEntries(S.teams.map(x => [x.id, x]));
+
+  if (creating) {
+    return `
+      <div class="statusbar">
+        <span class="pill pill--live">${esc(t('finaleTitle'))}</span>
+        <span class="grow"></span>
+        <span class="pill">${S.finale.length} / ${S.teams.length} ${esc(t('screenSubmitted'))}</span>
+        <span class="timer" id="timer">–</span>
+      </div>
+      <div class="center stack">
+        <span class="faint">${esc(t('finaleTheme'))}</span>
+        <div class="bigtheme">${esc(tr(f.theme) || '…')}</div>
+      </div>`;
+  }
 
   return `
-    <div class="center stack" style="margin-bottom:20px">
+    <div class="statusbar">
       <span class="pill pill--live">${esc(t('finaleTitle'))}</span>
-      <div class="bigtheme">${esc(tr(f.theme) || '…')}</div>
-      ${f.phase === 'creating' ? `<div><span class="timer" id="timer">–</span></div>` : ''}
-      ${winner ? `<h1 style="color:var(--lime)">${esc(t('winner'))}: ${esc(byId[winner.id]?.name || winner.id)}</h1>` : ''}
+      <b style="margin-left:10px;font-size:clamp(15px,1.3vw,21px)">${esc(tr(f.theme) || '')}</b>
+      ${winner ? `<b style="margin-left:14px;color:var(--green);font-size:clamp(16px,1.6vw,26px)">
+        ${esc(t('winner'))}: ${esc(byId[winner.id]?.name || winner.id)}</b>` : ''}
+      <span class="grow"></span>
+      <span class="pill">${S.votes.length} ${esc(t('votes'))}</span>
     </div>
-    <div class="entries">
-      ${finalists.map(id => {
-        const e = S.finale.find(x => x.id === id) || {};
-        return `<div class="entry ${winner?.id === id ? 'is-picked' : ''}">
-          ${e.image ? `<img src="${esc(e.image)}" alt="">`
-                    : `<div style="aspect-ratio:4/3;display:grid;place-items:center;color:var(--ink-faint);font-size:28px">…</div>`}
-          <div class="entry__body">
-            <div class="row">
-              <span class="dot" style="background:${teamColor(id)}"></span>
-              <b class="grow" style="font-size:20px">${esc(byId[id]?.name || id)}</b>
-              ${showVotes ? `<span class="entry__votes">${c[id] || 0}</span>` : ''}
-            </div>
-            ${e.prompt ? `<div class="entry__prompt">${esc(String(e.prompt).slice(0, 300))}</div>` : ''}
-          </div>
-        </div>`;
-      }).join('')}
-    </div>
-    ${f.phase === 'results' ? `<div class="card" style="margin-top:24px"><h2>${esc(t('leaderboard'))}</h2>${board(8)}</div>` : ''}`;
+    ${gallery(entries, c, showVotes)}`;
 }
 
 function tick() {
@@ -329,3 +398,13 @@ function tick() {
   el.classList.toggle('is-low', left > 0 && left < 30000);
 }
 setInterval(tick, 1000);
+
+// Advance the gallery every 10 seconds. Repaint only when a gallery is on
+// screen, so the rest of the time this costs nothing.
+setInterval(() => {
+  const track = document.querySelector('.gallery');
+  if (!track) return;
+  if (Number(track.dataset.slides || 1) < 2) return;
+  S.slide = (S.slide + 1) % Number(track.dataset.slides);
+  paint();
+}, 10000);

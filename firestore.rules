@@ -34,9 +34,7 @@ service cloud.firestore {
     function myTeam(eid) { return get(partPath(eid)).data.teamId; }
 
     function ev(eid) { return get(/databases/$(db)/documents/events/$(eid)).data; }
-    function finalists(eid) { return ev(eid).get('finalistTeamIds', []); }
     function finalePhase(eid) { return ev(eid).get('finale', {}).get('phase', 'idle'); }
-    function semifinalists(eid) { return ev(eid).get('semifinalistTeamIds', []); }
     function semiPhase(eid) { return ev(eid).get('semi', {}).get('phase', 'idle'); }
 
     function taskOpen(eid, taskId) {
@@ -138,40 +136,34 @@ service cloud.firestore {
         allow delete: if isAdmin();
       }
 
-      // Semi-final prompt reconstructions: doc id = teamId.
-      // While teams are still writing, a team can only read its own entry —
-      // otherwise the last team to submit could simply copy the best one.
+      // Round 5 entries: doc id = teamId. Every team takes part, and each one
+      // writes only its own entry. While teams are still creating, a team can
+      // read only its own — otherwise the last to submit could copy the best.
       match /semi/{tid} {
         allow get: if isAdmin()
           || (isPart(eid) && (myTeam(eid) == tid || semiPhase(eid) != 'creating'));
         allow list: if isAdmin() || (isPart(eid) && semiPhase(eid) != 'creating');
         allow write: if isAdmin()
-          || (isPart(eid)
-              && myTeam(eid) == tid
-              && tid in semifinalists(eid)
-              && semiPhase(eid) == 'creating');
+          || (isPart(eid) && myTeam(eid) == tid && semiPhase(eid) == 'creating');
       }
 
+      // One vote each, for any team except your own.
       match /semivotes/{uid} {
         allow get: if isAdmin() || (signedIn() && request.auth.uid == uid);
         allow list: if isAdmin();
         allow create, update: if signedIn() && request.auth.uid == uid && isPart(eid)
           && semiPhase(eid) == 'voting'
-          && !(myTeam(eid) in semifinalists(eid))
-          && request.resource.data.teamId in semifinalists(eid)
+          && request.resource.data.teamId != myTeam(eid)
           && request.resource.data.keys().hasOnly(['teamId', 'at']);
         allow delete: if isAdmin();
       }
 
-      // Final entries: doc id = teamId. Images are shown on the big screen as
-      // they land, so these stay readable throughout.
+      // Final entries: doc id = teamId. Images go on the big screen as they
+      // land, so these stay readable throughout.
       match /finale/{tid} {
         allow read: if isAdmin() || isPart(eid);
         allow write: if isAdmin()
-          || (isPart(eid)
-              && myTeam(eid) == tid
-              && tid in finalists(eid)
-              && finalePhase(eid) == 'creating');
+          || (isPart(eid) && myTeam(eid) == tid && finalePhase(eid) == 'creating');
       }
 
       match /votes/{uid} {
@@ -179,8 +171,7 @@ service cloud.firestore {
         allow list: if isAdmin();
         allow create, update: if signedIn() && request.auth.uid == uid && isPart(eid)
           && finalePhase(eid) == 'voting'
-          && !(myTeam(eid) in finalists(eid))
-          && request.resource.data.teamId in finalists(eid)
+          && request.resource.data.teamId != myTeam(eid)
           && request.resource.data.keys().hasOnly(['teamId', 'at']);
         allow delete: if isAdmin();
       }

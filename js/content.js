@@ -17,10 +17,9 @@ export const RUN_OF_SHOW = [
   { min: '11–18', en: 'Task 2 — Hallucination Hunt' },
   { min: '18–26', en: 'Task 3 — Prompt Golf' },
   { min: '26–35', en: "Task 4 — MacGyver's Inventory" },
-  { min: '35–38', en: 'Scores · TOP 5 announced' },
-  { min: '38–46', en: 'SEMI-FINAL — Reverse Prompt (5 min), room votes (3 min)' },
-  { min: '46–49', en: 'Semi results · TOP 3 to the final' },
-  { min: '49–57', en: 'FINAL — Prompt Battle (3 min), room votes (3 min)' },
+  { min: '35–37', en: 'Scores so far' },
+  { min: '37–46', en: 'ROUND 5 — Reverse Prompt, every team (6 min), room votes (3 min)' },
+  { min: '46–56', en: 'FINAL — Prompt Battle, every team (4 min), room votes (3 min)' },
   { min: '57–60', en: 'Winners, wrap-up' }
 ];
 
@@ -39,14 +38,14 @@ export const FINALE_THEMES = [
 // everyone else votes for the best reconstruction.
 // ---------------------------------------------------------------------------
 export const SEMI = {
-  title: 'SEMI-FINAL — Reverse Prompt',
-  intro: 'One image. Five teams. Work out the prompt that produced it, run your guess through an AI, and submit both your prompt and the picture it gave you. The rest of the room votes for whoever got closest.',
+  title: 'ROUND 5 — Reverse Prompt',
+  intro: 'One image. Every team. Work out the prompt that produced it, run your guess through an AI, and submit both your prompt and the picture it gave you. Then the whole room votes — for any team but your own.',
   steps: [
     'Look at the image above. Note the subject, the style, the setting, the lighting and the mood.',
     'Write the prompt you think produced it — as you would actually type it into an AI.',
     'Run your prompt in Copilot and download the image it generates.',
     'Paste your prompt below and upload that image.',
-    'Voters see your prompt and your picture side by side with the original.'
+    'Everyone then votes. You can vote for any team except your own, and every vote is a point.'
   ],
   hint: 'Style words carry more weight than object words. "Oil painting, dramatic light" gets you closer than listing everything in the frame.',
   voteHint: 'Which prompt would actually produce that picture?',
@@ -63,15 +62,15 @@ export const SEMI = {
 // The final — the host picks a theme and reveals it when the timer starts.
 export const FINAL = {
   title: 'FINAL — Prompt Battle',
-  intro: 'Three teams, one surprise theme, three minutes. Make the best image you can and upload it. The whole room votes.',
+  intro: 'Every team, one surprise theme, a few minutes. Make the best image you can and upload it. Then the whole room votes — for any team but your own, and every vote is a point.',
   steps: [
     'Read the theme above. It was only revealed just now — nobody had a head start.',
     'Open Copilot and write a prompt for it. Iterate as many times as the clock allows.',
     'Download the image you are proudest of.',
     'Upload it below and paste the prompt you used.',
-    'When the host opens voting, your image goes on the big screen for the room to judge.'
+    'When the host opens voting your image joins the big-screen gallery, and everyone picks a favourite that is not their own.'
   ],
-  voterNote: 'You are the jury. The finalists are creating now — get ready to vote for the image that best captures the theme.'
+  voterNote: 'Everyone is creating. When the host opens voting you will pick the image that best captures the theme — any team but your own.'
 };
 
 // ---------------------------------------------------------------------------

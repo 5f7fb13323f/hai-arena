@@ -353,3 +353,62 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   align-items: start;
 }
+
+/* ------------------------------------------------------- answer review -- */
+.review {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+}
+.review__item {
+  padding: 14px 16px; border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.review__item--flag { border-color: rgba(255,197,61,.42); background: rgba(255,197,61,.07); }
+.review__text { line-height: 1.5; font-size: clamp(14px, 1.15vw, 18px); }
+.review__note {
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
+  color: var(--ink-dim); font-size: clamp(13px, 1vw, 16px); line-height: 1.45;
+}
+
+/* ------------------------------------------------------------- gallery -- */
+.gallery { overflow: hidden; }
+.gallery__track { display: flex; transition: transform .6s cubic-bezier(.4,0,.2,1); }
+.gallery__slide { flex: none; }
+.gallery__grid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: 1fr;
+}
+.tile {
+  margin: 0; border-radius: 12px; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--line);
+  display: flex; flex-direction: column;
+}
+.tile img { width: 100%; aspect-ratio: 1/1; object-fit: cover; display: block; }
+.tile__blank {
+  aspect-ratio: 1/1; display: grid; place-items: center;
+  color: var(--ink-faint); font-size: 26px;
+}
+.tile figcaption {
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 10px; font-weight: 700;
+  font-size: clamp(12px, 1vw, 16px);
+}
+.tile__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile__votes { margin-left: auto; font: 800 clamp(14px,1.2vw,20px) var(--mono); color: var(--green); }
+
+.gallery__dots { display: flex; gap: 7px; justify-content: center; margin-top: 14px; }
+.gallery__dots span {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--line); transition: .3s;
+}
+.gallery__dots span.is-on { background: var(--green); width: 26px; border-radius: 5px; }
+
+@media (max-width: 900px) { .gallery__grid { grid-template-columns: repeat(2, 1fr); } }
+
+.linklike {
+  background: none; border: 0; padding: 0; margin-left: 4px;
+  font: inherit; font-weight: 700; color: var(--green);
+  text-decoration: underline; cursor: pointer;
+}
+.linklike:hover { filter: brightness(1.15); }

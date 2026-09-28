@@ -31,7 +31,7 @@ export async function getUserDoc(uid) {
  * Calls onDone(user) once the user is signed in.
  */
 export function renderAuth(container, { onDone } = {}) {
-  let mode = 'login';
+  let mode = 'register';
 
   const paint = () => {
     const reg = mode === 'register';
@@ -60,10 +60,9 @@ export function renderAuth(container, { onDone } = {}) {
             ${reg ? esc(t('register')) : esc(t('login'))}
           </button>
         </form>
-        <p class="center" style="margin:14px 0 0">
-          <button class="btn btn--ghost btn--sm" id="atoggle" type="button">
-            ${reg ? esc(t('haveAccount')) : esc(t('needAccount'))}
-          </button>
+        <p class="center faint" style="margin:16px 0 0">
+          ${reg ? esc(t('haveAccountAsk')) : esc(t('needAccountAsk'))}
+          <button class="linklike" id="atoggle" type="button">${reg ? esc(t('login')) : esc(t('register'))}</button>
         </p>
       </div>`;
 

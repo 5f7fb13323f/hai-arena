@@ -129,14 +129,21 @@ seed, so you can also edit it in the Firebase console up to the last minute. Eve
 both voted rounds carry a numbered `steps` list, which the app shows to players as a
 "How to play" box — keep those updated if you change a task.
 
+**Scoring is elastic.** Every task is worth one point per person in the event — 50 people means
+a perfect answer is worth 50, split across that task's questions. The ceiling is stamped onto
+the task when you open it, so late arrivals never change what an earlier round was worth.
+
 | Task | Type | Scoring |
 |---|---|---|
-| The Turing Taste Test | `quiz-single` | 2 pts per correct, max 12, automatic |
-| Hallucination Hunt | `quiz-multi` | +3 per hallucination caught, −2 per false accusation, floored at 0 |
-| Prompt Golf | `golf` | 4 pts accepted + 10/7/5/3/2 by shortest prompt, **host can override any score** |
-| MacGyver's Inventory | `open` | host scores 0–10 |
-| Semi-final — Reverse Prompt | voted round | 20/14/10/7/5 by audience vote |
-| Final — Prompt Battle | voted round | 30/20/10 by audience vote |
+| The Turing Taste Test | `quiz-single` | max ÷ 6 per correct answer |
+| Hallucination Hunt | `quiz-multi` | max ÷ 4 per catch, minus two-thirds of that per false accusation, floored at 0 |
+| Prompt Golf | `golf` | 25% of max for a valid entry, the rest down the length ladder, **host can override** |
+| MacGyver's Inventory | `open` | host scores 0–10, stretched to max |
+| Round 5 — Reverse Prompt | voted round | one vote, one point |
+| Final — Prompt Battle | voted round | one vote, one point |
+
+Both voted rounds are open to **every team**, and everyone votes for any team except their
+own — so their ceiling lands near the headcount too.
 
 **Hallucination Hunt** is deliberately non-technical: the four false claims are the green-glass
 myth, lager fermenting warm, Heineken owning Guinness, and yeast being named in the 1516 purity
