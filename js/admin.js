@@ -294,19 +294,31 @@ const countVotes = (rows) => {
   return c;
 };
 
-async function applyVotedRound(teamIds, counts, ladder, label) {
+// Applying a voted round is REPLAY-SAFE. We remember what the round last
+// awarded, take that back off, then apply the current standings — so pressing
+// the button again after a few late votes corrects the scores instead of
+// paying everybody twice.
+async function applyVotedRound(field, teamIds, counts, ladder, label) {
   const { ranked, award } = awardByVotes(teamIds, counts, ladder);
+  const previous = S.event[field] || {};
+
   const bonusByTeam = Object.fromEntries(S.teams.map(x => [x.id, Number(x.bonus || 0)]));
-  for (const [id, pts] of Object.entries(award)) bonusByTeam[id] = (bonusByTeam[id] || 0) + pts;
+  for (const [id, pts] of Object.entries(previous)) bonusByTeam[id] = (bonusByTeam[id] || 0) - Number(pts || 0);
+  for (const [id, pts] of Object.entries(award)) bonusByTeam[id] = (bonusByTeam[id] || 0) + Number(pts || 0);
 
   const b = writeBatch(db);
   for (const teamDoc of S.teams) {
     b.set(doc(db, 'events', S.eid, 'teams', teamDoc.id), { bonus: bonusByTeam[teamDoc.id] || 0 }, { merge: true });
   }
   recomputeInto(b, bonusByTeam);
+  // update() rather than set(merge) so the record replaces cleanly and cannot
+  // accumulate stale teams from an earlier line-up.
+  b.update(doc(db, 'events', S.eid), { [field]: award });
   await b.commit();
+
   const name = id => S.teams.find(x => x.id === id)?.name || id;
-  toast(`${label} points applied — ${ranked.map(r => `${name(r.id)} ${award[r.id]}`).join(', ')}`);
+  const again = Object.keys(previous).length ? 're-applied' : 'applied';
+  toast(`${label} points ${again} — ${ranked.map(r => `${name(r.id)} ${award[r.id]}`).join(', ')}`);
 }
 
 // Firestore has no recursive delete from the browser, so we walk the
@@ -391,6 +403,7 @@ async function uploadSemiImage(file) {
 
 async function clearRound(which) {
   const b = writeBatch(db);
+  b.update(doc(db, 'events', S.eid), { [which === 'semi' ? 'semiAward' : 'finalAward']: null });
   if (which === 'semi') {
     for (const v of S.semivotes) b.delete(doc(db, 'events', S.eid, 'semivotes', v.id));
     for (const e of S.semi) b.delete(doc(db, 'events', S.eid, 'semi', e.id));
@@ -681,7 +694,8 @@ function semiCard() {
       <button class="btn btn--sm btn--ghost" data-sphase="results">Results</button>
       <button class="btn btn--sm btn--ghost" data-sphase="idle">Reset</button>
     </div>
-    <p class="faint" style="margin-top:10px">phase: <b>${esc(s.phase || 'idle')}</b> · entries ${S.semi.length} · votes ${S.semivotes.length}</p>
+    <p class="faint" style="margin-top:10px">phase: <b>${esc(s.phase || 'idle')}</b> · entries ${S.semi.length} · votes ${S.semivotes.length}
+      ${S.event.semiAward ? '· <b style="color:var(--green)">points applied</b>' : '· votes are counted but not yet scored'}</p>
 
     <div class="lb">
       ${ids.map(id => {
@@ -698,7 +712,7 @@ function semiCard() {
     </div>
 
     <div class="row" style="margin-top:12px">
-      <button class="btn btn--sm" id="semiApply">Apply semi points (20/14/10/7/5)</button>
+      <button class="btn btn--sm" id="semiApply">${S.event.semiAward ? 'Re-apply' : 'Apply'} semi points (20/14/10/7/5)</button>
       <button class="btn btn--sm btn--ghost" id="semiToFinal">Send top 3 to the final</button>
       <button class="btn btn--sm btn--danger" id="semiClear">Clear entries &amp; votes</button>
     </div>
@@ -730,7 +744,8 @@ function finaleCard() {
       <button class="btn btn--sm btn--ghost" data-phase="results">Show results</button>
       <button class="btn btn--sm btn--ghost" data-phase="idle">Reset phase</button>
     </div>
-    <p class="faint" style="margin-top:10px">phase: <b>${esc(f.phase || 'idle')}</b> · entries ${S.finale.length} · votes ${S.votes.length}</p>
+    <p class="faint" style="margin-top:10px">phase: <b>${esc(f.phase || 'idle')}</b> · entries ${S.finale.length} · votes ${S.votes.length}
+      ${S.event.finalAward ? '· <b style="color:var(--green)">points applied</b>' : '· votes are counted but not yet scored'}</p>
     <div class="lb">
       ${ids.map(id => `<div class="lb__row">
         <div class="lb__rank"></div>
@@ -739,7 +754,7 @@ function finaleCard() {
         <div class="lb__pts">${counts[id] || 0}</div></div>`).join('')}
     </div>
     <div class="row" style="margin-top:12px">
-      <button class="btn btn--sm" id="applyFin">Apply final points (30/20/10)</button>
+      <button class="btn btn--sm" id="applyFin">${S.event.finalAward ? 'Re-apply' : 'Apply'} final points (30/20/10)</button>
       <button class="btn btn--sm btn--danger" id="clearFin">Clear entries &amp; votes</button>
     </div>
   </div>`;
@@ -903,7 +918,7 @@ function wire() {
     setEvent({ semi: patch, phase: phase === 'idle' ? 'part1' : 'semi' });
   });
   $('#semiApply')?.addEventListener('click', () =>
-    applyVotedRound(S.event.semifinalistTeamIds || [], countVotes(S.semivotes), SEMI_LADDER, 'Semi-final'));
+    applyVotedRound('semiAward', S.event.semifinalistTeamIds || [], countVotes(S.semivotes), SEMI_LADDER, 'Semi-final'));
   $('#semiToFinal')?.addEventListener('click', async () => {
     const counts = countVotes(S.semivotes);
     const { ranked } = awardByVotes(S.event.semifinalistTeamIds || [], counts, SEMI_LADDER);
@@ -933,7 +948,7 @@ function wire() {
     setEvent({ finale: patch, phase: phase === 'idle' ? 'part1' : 'finale' });
   });
   $('#applyFin')?.addEventListener('click', () =>
-    applyVotedRound(S.event.finalistTeamIds || [], countVotes(S.votes), FINAL_LADDER, 'Final'));
+    applyVotedRound('finalAward', S.event.finalistTeamIds || [], countVotes(S.votes), FINAL_LADDER, 'Final'));
   $('#endEvent')?.addEventListener('click', () => {
     const unapplied = (S.event.finalistTeamIds || []).length && S.votes.length;
     const warn = unapplied

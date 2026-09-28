@@ -112,8 +112,10 @@ function podiumView() {
   const top = ranked.slice(0, 3);
   const rest = ranked.slice(3);
   const medals = ['🥇', '🥈', '🥉'];
-  const order = [1, 0, 2];          // silver, gold, bronze — gold in the middle
-  const heights = [200, 260, 160];
+  // Indexed by RANK, not by where the column sits: first place must be the
+  // tallest block wherever we put it.
+  const heights = [230, 175, 140];
+  const order = [1, 0, 2];          // silver, gold, bronze — winner in the middle
 
   return `
     <div class="center" style="margin-bottom:26px">
@@ -123,7 +125,7 @@ function podiumView() {
     <div class="podium">
       ${order.filter(i => top[i]).map(i => {
         const x = top[i];
-        return `<div class="podium__col">
+        return `<div class="podium__col ${i === 0 ? 'podium__col--win' : ''}">
           <div class="podium__medal">${medals[i]}</div>
           <div class="podium__name"><span class="dot" style="background:${teamColor(x.id)}"></span>${esc(x.name || x.id)}</div>
           <div class="podium__pts">${Number(x.points || 0)}</div>

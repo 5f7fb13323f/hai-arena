@@ -59,7 +59,7 @@ function attachEvent() {
   S.event = null; S.me = null; S.teams = []; S.participants = [];
   S.task = null; S.sub = null; S.finaleEntries = []; S.myVote = null;
   S.semiImage = null; S.semiEntries = []; S.mySemi = null; S.mySemiVote = null;
-  attachedTaskId = null; attachedSubId = null; semiListPhase = null;
+  attachedTaskId = null; attachedSubId = null; semiListPhase = null; mateTeamId = null;
   if (!S.eventId) { paint(); return; }
 
   const eid = S.eventId;
@@ -76,13 +76,10 @@ function attachEvent() {
   eventUnsubs.push(onSnapshot(doc(db, ...base, 'participants', S.user.uid), (snap) => {
     S.me = snap.exists() ? { id: snap.id, ...snap.data() } : null;
     attachSubmission();
+    attachTeammates();
     paint();
   }, () => paint()));
 
-  eventUnsubs.push(onSnapshot(collection(db, ...base, 'participants'), (qs) => {
-    S.participants = qs.docs.map(d => ({ id: d.id, ...d.data() }));
-    paint();
-  }, () => {}));
 
   eventUnsubs.push(onSnapshot(collection(db, ...base, 'teams'), (qs) => {
     S.teams = qs.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -92,6 +89,24 @@ function attachEvent() {
 
 let taskUnsub = null, subUnsub = null, finaleUnsub = null, voteUnsub = null;
 let attachedTaskId = null;
+
+// Only my own four teammates, not the whole room. With 80 people this is the
+// difference between 80 document reads per phone and 5 — and it repeats every
+// time the host shuffles, so it matters more than it looks.
+let mateUnsub = null, mateTeamId = null;
+function attachTeammates() {
+  const tid = S.me?.teamId || null;
+  if (tid === mateTeamId) return;
+  mateTeamId = tid;
+  mateUnsub?.(); mateUnsub = null;
+  S.participants = [];
+  if (!tid) { paint(); return; }
+  mateUnsub = onSnapshot(
+    query(collection(db, 'events', S.eventId, 'participants'), where('teamId', '==', tid)),
+    (qs) => { S.participants = qs.docs.map(d => ({ id: d.id, ...d.data() })); paint(); },
+    () => {});
+  eventUnsubs.push(() => { mateUnsub?.(); mateUnsub = null; mateTeamId = null; });
+}
 
 function attachTask() {
   const id = S.event?.activeTaskId || null;

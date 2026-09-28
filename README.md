@@ -171,8 +171,13 @@ runs from the host panel, so it only works while that page is open — which it 
 
 - **Images** are downscaled in the browser to ~1100 px JPEG and stored as a data URL inside the
   Firestore document. No Firebase Storage, no Blaze plan.
-- **Costs**: with 100 players, four tasks and two voted rounds you are well inside the Spark
-  free daily quota (50k reads / 20k writes).
+- **Free-tier headroom**: the Spark plan allows 50,000 Firestore reads a day. A full session
+  with 80 players works out around 20,000, so one event plus a rehearsal fits. Each extra
+  **Shuffle into teams** costs roughly 3,000 reads, so shuffle once and leave it. Players
+  listen only to their own team's roster, not the whole room — that single decision is worth
+  about 18,000 reads per session at this size. If you want no risk at all, switch the project
+  to Blaze with a budget alert: the overage price is about $0.06 per 100,000 reads, so a
+  session costs pennies even if you blow past the free tier.
 - **Semi-final fairness**: while teams are writing their reconstruction, the rules stop a team
   reading anyone else's entry. Everything opens up when you start voting, and voters then see
   each team's generated picture next to its prompt.
