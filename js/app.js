@@ -292,6 +292,13 @@ function steps(list) {
 
 function taskPanel() {
   const task = S.task;
+  if (S.event?.phase === 'prep') {
+    return `<div class="card center stack">
+      <h2>${esc(t('prepTitle'))}</h2>
+      <p class="muted">${esc(t('prepBody'))}</p>
+      <button class="btn" data-tab="team">${esc(t('renameTeam'))}</button>
+    </div>`;
+  }
   if (!task || task.status === 'locked') {
     return `<div class="card center stack">
       <h2>${esc(t('noTaskTitle'))}</h2><p class="muted">${esc(t('noTaskBody'))}</p></div>`;
@@ -444,7 +451,7 @@ function wireTaskPanel() {
 // ------------------------------------------------------------ team & board --
 function teamPanel() {
   const team = myTeamDoc();
-  const canRename = S.event?.phase === 'lobby';
+  const canRename = S.event?.phase === 'prep';
   const mates = S.participants
     .filter(p => p.teamId === S.me.teamId)
     .sort((a, b) => (a.slot || 0) - (b.slot || 0));

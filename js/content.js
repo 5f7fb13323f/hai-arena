@@ -2,14 +2,10 @@
 // Seeded into Firestore by the host panel ("Seed default tasks"), so you can
 // also edit the wording in the Firebase console afterwards without redeploying.
 
-export const TEAM_NAMES = [
-  'Hop Tokens', 'Malt Vectors', 'Prompt Pilsner', 'Silicon Brewers',
-  'Hallucination Hunters', 'Context Window', 'Neural Nets', 'Stochastic Parrots',
-  'Cold Fermented', 'Latent Lager', 'Beam Search', 'Zero Shot',
-  'Backprop Bandits', 'Temperature 0.9', 'The Embeddings', 'Attention Heads',
-  'Fine Tuners', 'Edge Cases', 'Rubber Ducks', 'Greedy Decoders',
-  'Barrel Aged Bots', 'Few Shot Heroes', 'Loss Function', 'Chain of Thought'
-];
+// Teams are numbered by default — Team 1, Team 2, … — and rename themselves
+// during the preparation step. Numbers make the big screen readable at a
+// glance and stop anyone feeling stuck with a name they did not pick.
+export const teamName = (n) => `Team ${n}`;
 
 // Suggested run of show for a 60 minute workshop with ~20 teams.
 // Four Part 1 tasks plus a semi-final and a final is a full hour with no slack —

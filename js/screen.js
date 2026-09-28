@@ -8,7 +8,7 @@ import { APP_TITLE } from './firebase-config.js';
 const S = {
   user: null, admin: false, eid: null, event: null,
   teams: [], participants: [], task: null, finale: [], votes: [],
-  semi: [], semivotes: [], semiImage: null, joinUrl: ''
+  semi: [], semivotes: [], semiImage: null, subs: [], joinUrl: ''
 };
 const root = () => $('#root');
 let unsubs = [];
@@ -51,6 +51,9 @@ function attach(eid) {
   unsubs.push(onSnapshot(collection(db, ...b, 'participants'), qs => {
     S.participants = qs.docs.map(d => ({ id: d.id, ...d.data() })); paint();
   }));
+  unsubs.push(onSnapshot(collection(db, ...b, 'submissions'), qs => {
+    S.subs = qs.docs.map(d => ({ id: d.id, ...d.data() })); paint();
+  }, () => {}));
   unsubs.push(onSnapshot(collection(db, ...b, 'finale'), qs => {
     S.finale = qs.docs.map(d => ({ id: d.id, ...d.data() })); paint();
   }));
@@ -72,7 +75,7 @@ function attach(eid) {
 
 let taskUnsub = null, attachedId = null;
 function attachTask() {
-  const id = S.event?.activeTaskId || null;
+  const id = S.event?.showcaseTaskId || S.event?.activeTaskId || null;
   if (id === attachedId) return;
   attachedId = id;
   taskUnsub?.(); taskUnsub = null;
@@ -96,6 +99,7 @@ function paint() {
     return;
   }
   root().innerHTML =
+    S.event.showcaseTaskId ? showcaseView() :
     S.event.phase === 'done' ? podiumView() :
     S.event.phase === 'finale' ? finaleView() :
     S.event.phase === 'semi' ? semiView() :
@@ -181,12 +185,25 @@ function semiView() {
     </div>`;
 }
 
+function answeredTeams() {
+  const id = S.event?.activeTaskId;
+  if (!id) return null;
+  return new Set(S.subs.filter(x => x.taskId === id).map(x => x.teamId));
+}
+
 function board(limit) {
   const ranked = rankTeams(S.teams).slice(0, limit || S.teams.length);
+  const done = answeredTeams();
   return `<div class="lb">${ranked.map(x => `
     <div class="lb__row">
       <div class="lb__rank">${x.rank}</div>
-      <div class="lb__name"><span class="dot" style="background:${teamColor(x.id)}"></span><span>${esc(x.name || x.id)}</span></div>
+      <div class="lb__name">
+        <span class="dot" style="background:${teamColor(x.id)}"></span>
+        <span>${esc(x.name || x.id)}</span>
+        ${done ? (done.has(x.id)
+          ? `<span class="tick" title="answered">✓</span>`
+          : `<span class="tick tick--wait">·</span>`) : ''}
+      </div>
       <div class="lb__pts">${Number(x.points || 0)}</div>
     </div>`).join('')}</div>`;
 }
@@ -194,29 +211,70 @@ function board(limit) {
 function mainView() {
   const task = S.task;
   const live = task && task.status === 'open';
+  const prep = S.event.phase === 'prep';
+  const done = answeredTeams();
+  const answered = done ? done.size : 0;
+
+  const status = task
+    ? `<span class="pill ${live ? 'pill--live' : 'pill--closed'}">${esc(live ? t('screenOpen') : t('screenClosed'))}</span>
+       <b style="margin-left:10px;font-size:clamp(15px,1.4vw,22px)">${esc(tr(task.title))}</b>`
+    : `<span class="pill">${esc(prep ? t('screenPrep') : t('screenWaiting'))}</span>`;
+
   return `
-    <div class="row" style="margin-bottom:18px">
-      <h1 class="grow" style="margin:0">${esc(S.event.name || APP_TITLE)}</h1>
+    <div class="statusbar">
+      <div class="row" style="min-width:0">${status}</div>
+      <span class="grow"></span>
+      ${task && live ? `<span class="pill">${answered} / ${S.teams.length} ${esc(t('screenAnswered'))}</span>` : ''}
       <span class="pill">${S.teams.length} ${esc(t('screenTeams'))} · ${S.participants.length} ${esc(t('screenPlayers'))}</span>
+      ${task ? `<span class="timer" id="timer">–</span>` : ''}
     </div>
     <div class="screen-grid">
       <div class="card stack">
         ${task ? `
-          <div class="row">
-            <span class="pill ${live ? 'pill--live' : 'pill--closed'}">${esc(live ? t('timeLeft') : t('closedTitle'))}</span>
-            <span class="grow"></span>
-            <span class="timer" id="timer">–</span>
-          </div>
           <h1 style="font-size:clamp(26px,3vw,44px)">${esc(tr(task.title))}</h1>
           <p class="muted" style="font-size:clamp(15px,1.3vw,20px)">${esc(tr(task.intro))}</p>
+          ${live && Array.isArray(task.payload?.steps) ? `<ol class="screen-steps">
+            ${task.payload.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
+        ` : prep ? `
+          <h1>${esc(t('prepTitle'))}</h1>
+          <p class="muted" style="font-size:20px">${esc(t('prepBody'))}</p>
         ` : `
           <h1>${esc(t('screenPart1'))}</h1>
           <p class="muted" style="font-size:20px">${esc(t('screenJoin'))} <b>${esc(S.joinUrl)}</b></p>`}
       </div>
       <div class="card">
         <h2>${esc(t('leaderboard'))}</h2>
-        ${board(12)}
+        ${board(14)}
       </div>
+    </div>`;
+}
+
+// Everyone's answers to an open-ended task, up on the wall to be read out.
+function showcaseView() {
+  const taskId = S.event.showcaseTaskId;
+  const task = S.task && S.task.id === taskId ? S.task : null;
+  const byId = Object.fromEntries(S.teams.map(x => [x.id, x]));
+  const rows = S.subs
+    .filter(x => x.taskId === taskId && (x.name || x.text))
+    .sort((a, b) => String(byId[a.teamId]?.name || '').localeCompare(String(byId[b.teamId]?.name || '')));
+
+  return `
+    <div class="statusbar">
+      <span class="pill pill--live">${esc(tr(task?.title) || 'Submissions')}</span>
+      <span class="grow"></span>
+      <span class="pill">${rows.length} ${esc(t('screenAnswered'))}</span>
+    </div>
+    <div class="showcase">
+      ${rows.length ? rows.map(x => `
+        <div class="card" style="margin:0">
+          <div class="row" style="margin-bottom:8px">
+            <span class="dot" style="background:${teamColor(x.teamId)}"></span>
+            <b>${esc(byId[x.teamId]?.name || x.teamId)}</b>
+          </div>
+          ${x.name ? `<h2 style="margin:0 0 6px">${esc(x.name)}</h2>` : ''}
+          <div style="line-height:1.5">${esc(String(x.text || '').slice(0, 700))}</div>
+        </div>`).join('')
+      : `<div class="card center muted">No answers yet.</div>`}
     </div>`;
 }
 

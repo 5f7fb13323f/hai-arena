@@ -59,9 +59,11 @@ const STRINGS = {
   semiOriginal: 'The original',
 
   renameTeam: 'Team name',
-  renameHint: 'Any member can rename the team until the first task starts.',
+  renameHint: 'Any member of your team can change this. It shows on the big screen.',
   renameSave: 'Save name',
-  renameLocked: 'Names are locked once the event starts.',
+  renameLocked: 'Names are locked for now.',
+  prepTitle: 'Name your team',
+  prepBody: 'You have a few minutes before the first task. Open the Team tab and give yourselves a better name than a number.',
 
   endTitle: "That's a wrap",
   endThanks: 'Thanks for playing.',
@@ -71,7 +73,11 @@ const STRINGS = {
 
   screenTeams: 'Teams', screenPlayers: 'players',
   screenJoin: 'Join at', screenNoEvent: 'No event running',
-  screenPart1: 'Part 1 — Team competition'
+  screenPart1: 'Part 1 — Team competition',
+  screenWaiting: 'Waiting for the next task',
+  screenPrep: 'Teams are naming themselves',
+  screenAnswered: 'answered',
+  screenOpen: 'OPEN', screenClosed: 'CLOSED'
 };
 
 export function t(key) {

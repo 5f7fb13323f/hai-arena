@@ -4,7 +4,7 @@ import {
 } from './firebase.js';
 import { renderAuth, watchAuth, logout, isAdmin } from './auth.js';
 import { $, esc, toast, shuffle, slug, teamColor, imageToDataUrl } from './util.js';
-import { TASKS, TEAM_NAMES, FINALE_THEMES, RUN_OF_SHOW, SEMI } from './content.js';
+import { TASKS, teamName, FINALE_THEMES, RUN_OF_SHOW, SEMI } from './content.js';
 import { gradeTask, totalsFromSubmissions, rankTeams, makeTeams, awardByVotes } from './scoring.js';
 import { createAccounts, testerNames } from './bulk.js';
 
@@ -200,14 +200,13 @@ async function shuffleTeams(size) {
   const ids = shuffle(S.participants.map(p => p.id));
   if (!ids.length) return toast('No participants yet', 'err');
   const groups = makeTeams(ids, size);
-  const names = shuffle(TEAM_NAMES);
 
   const b = writeBatch(db);
   for (const old of S.teams) b.delete(doc(db, 'events', S.eid, 'teams', old.id));
   groups.forEach((members, i) => {
     const tid = `team-${String(i + 1).padStart(2, '0')}`;
     b.set(doc(db, 'events', S.eid, 'teams', tid), {
-      name: names[i % names.length], points: 0, bonus: 0,
+      name: teamName(i + 1), points: 0, bonus: 0,
       memberCount: members.length, order: i + 1
     });
     members.forEach((uid, j) => {
@@ -215,8 +214,11 @@ async function shuffleTeams(size) {
     });
   });
   await b.commit();
-  toast(`${groups.length} teams created — they can rename themselves until you open task 1`);
+  toast(`${groups.length} teams created — open preparation to let them rename`);
 }
+
+const openPrep = () => setEvent({ phase: 'prep' }).then(() => toast('Preparation open — teams can rename themselves'));
+const closePrep = () => setEvent({ phase: 'lobby' }).then(() => toast('Preparation closed — names are locked'));
 
 async function openTask(taskId, minutes) {
   const endsAt = new Date(Date.now() + Math.max(1, minutes) * 60000);
@@ -224,7 +226,7 @@ async function openTask(taskId, minutes) {
   b.set(doc(db, 'events', S.eid, 'tasks', taskId), { status: 'open', endsAt }, { merge: true });
   b.set(doc(db, 'events', S.eid), { activeTaskId: taskId, phase: 'part1' }, { merge: true });
   await b.commit();
-  toast('Task open — team names are now locked');
+  toast('Task open');
 }
 
 const closeTask = (taskId) =>
@@ -258,6 +260,7 @@ async function gradeAndPublish(taskId) {
       awarded: g.points, gradeDetail: g.detail, locked: true
     }, { merge: true });
   }
+  b.set(doc(db, 'events', S.eid, 'tasks', taskId), { graded: true }, { merge: true });
   // Recompute every team's total from scratch: the freshly graded submissions
   // for this task, plus every other task's already-awarded points, plus bonus.
   // Grading the same task twice is therefore safe — it never double-counts.
@@ -359,6 +362,10 @@ async function deleteEvent(eid) {
   selectEvent(next ? next.id : null);
   toast(`Deleted "${ev.name}" and ${refs.length} record(s)`);
 }
+
+const showcase = (taskId) =>
+  setEvent({ showcaseTaskId: taskId }).then(() =>
+    toast(taskId ? 'Answers are on the big screen' : 'Big screen back to the leaderboard'));
 
 async function endEvent() {
   const open = S.tasks.find(x => x.status === 'open');
@@ -465,6 +472,17 @@ function rosterCard() {
       <input type="number" id="tsize" value="5" min="2" max="8">
       <button class="btn btn--sm btn--pink" id="shuffle">Shuffle into teams</button>
     </div>
+
+    <div class="row" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+      ${S.event.phase === 'prep'
+        ? `<button class="btn btn--sm" id="closePrep">Close preparation</button>
+           <span class="faint">Teams are renaming themselves right now.</span>`
+        : `<button class="btn btn--sm btn--ghost" id="openPrep"
+             ${S.teams.length ? '' : 'disabled'}>Open preparation</button>
+           <span class="faint">${S.teams.length
+             ? 'Lets teams rename themselves. Close it before task 1.'
+             : 'Shuffle the teams first.'}</span>`}
+    </div>
     <input type="text" id="filter" placeholder="Find a person…" value="${esc(S.filter)}" style="margin-top:10px">
 
     <div class="scroll" style="margin-top:10px">
@@ -541,13 +559,17 @@ function tasksCard() {
   }
   return `<div class="card">
     <h2>Tasks</h2>
+    <p class="faint">For each one: <b>Open</b> → teams answer → <b>Close</b> → <b>Review</b>
+      (accept or score where needed) → <b>Grade &amp; publish</b>. The leaderboard only moves
+      on that last click. Then open the next task.</p>
     <table><thead><tr><th>Task</th><th>Status</th><th>Subs</th><th>Control</th></tr></thead><tbody>
     ${S.tasks.map(task => {
       const n = S.subs.filter(s => s.taskId === task.id).length;
       const cls = task.status === 'open' ? 'pill--live' : task.status === 'closed' ? 'pill--closed' : '';
       return `<tr>
         <td><b>${esc(taskTitle(task))}</b><br><span class="faint">${esc(task.type)}</span></td>
-        <td><span class="pill ${cls}">${esc(task.status)}</span></td>
+        <td><span class="pill ${cls}">${esc(task.status)}</span>
+          ${task.graded ? '<br><span class="pill pill--live" style="margin-top:4px">graded</span>' : ''}</td>
         <td class="mono">${n} / ${S.teams.length}</td>
         <td><div class="row">
           <input type="number" class="tmin" data-task="${esc(task.id)}" value="${task.minutes || 6}" min="1" max="30">
@@ -607,9 +629,20 @@ function gradingCard() {
 
   return `<div class="card">
     <h2>Review — ${esc(taskTitle(task) || taskId)}</h2>
-    <p class="faint">${subs.length} submission(s)${task.type === 'golf'
-      ? ' · accept the ones whose output really met the target; the number box overrides the automatic score'
-      : ''}</p>
+    <p class="faint">${subs.length} submission(s) of ${S.teams.length} team(s)</p>
+    ${task.type === 'golf' ? `<p class="warn">Click <b>accept</b> for every team whose pasted output
+        really meets all three rules — un-accepted teams score 0. The number box is an override:
+        fill it only if you want to replace the automatic score entirely.</p>` : ''}
+    ${task.type === 'open' ? `<p class="warn">Type a score from 0 to ${task.points?.max || 10} in each
+        team's box. Nothing is added to the leaderboard until you press
+        <b>Grade &amp; publish</b> — that applies every box at once.</p>` : ''}
+    ${task.type === 'open' ? `<div class="row" style="margin-bottom:10px">
+        ${S.event.showcaseTaskId === taskId
+          ? `<button class="btn btn--sm" data-showcase="">Hide from big screen</button>
+             <span class="faint">The answers are on the big screen now.</span>`
+          : `<button class="btn btn--sm btn--ghost" data-showcase="${esc(taskId)}">Show answers on big screen</button>
+             <span class="faint">Put every team's invention up so the room can read them.</span>`}
+      </div>` : ''}
     <div class="scroll"><table><thead><tr><th>Team</th><th>Answer</th><th>Score</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="3" class="faint">nothing yet</td></tr>'}</tbody></table></div>
     <div class="row" style="margin-top:12px">
@@ -770,6 +803,9 @@ function wire() {
     }
   });
   on('[data-rm]', 'click', e => removeParticipant(e.currentTarget.dataset.rm));
+  $('#openPrep')?.addEventListener('click', openPrep);
+  $('#closePrep')?.addEventListener('click', closePrep);
+  on('[data-showcase]', 'click', e => showcase(e.currentTarget.dataset.showcase || null));
 
   const toggleHost = async (uid) => {
     const u = S.users.find(x => x.id === uid);

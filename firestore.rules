@@ -81,14 +81,15 @@ service cloud.firestore {
         allow write: if isAdmin();
       }
 
-      // Teams may rename themselves, but only in the lobby and only the name.
+      // Teams may rename themselves, but only during the preparation step and
+      // only the name field.
       match /teams/{tid} {
         allow read: if isAdmin() || isPart(eid);
         allow create, delete: if isAdmin();
         allow update: if isAdmin()
           || (isPart(eid)
               && myTeam(eid) == tid
-              && ev(eid).phase == 'lobby'
+              && ev(eid).phase == 'prep'
               && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
               && request.resource.data.name is string
               && request.resource.data.name.size() > 0

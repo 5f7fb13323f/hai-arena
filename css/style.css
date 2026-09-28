@@ -324,3 +324,24 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
   font: 800 clamp(28px,3vw,46px) var(--mono); color: var(--ink-faint);
 }
 @media (max-width: 700px) { .podium__block { height: 90px !important; } }
+
+/* ------------------------------------------------- big-screen status bar -- */
+.statusbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 18px; margin-bottom: 20px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.statusbar .pill { font-size: clamp(12px, 1.1vw, 16px); }
+.statusbar .timer { font-size: clamp(20px, 2.4vw, 36px); }
+
+.screen-steps { margin: 6px 0 0; padding-left: 26px; }
+.screen-steps li { line-height: 1.5; font-size: clamp(14px, 1.2vw, 19px); margin-bottom: 4px; color: var(--ink-dim); }
+
+.tick { margin-left: 8px; font-weight: 800; color: var(--green); }
+.tick--wait { color: var(--ink-faint); }
+
+.showcase {
+  display: grid; gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  align-items: start;
+}

@@ -104,7 +104,7 @@ you pasted. A truncated copy is the usual cause.
 
 | Min | What happens |
 |---|---|
-| 0–5 | People log in. **Add everyone** → team size 5 → **Shuffle into teams**. Teams appear on phones and the screen, and can **rename themselves** until you open task 1. |
+| 0–5 | People log in. **Add everyone** → team size 5 → **Shuffle into teams** (they become Team 1, Team 2 …). Then **Open preparation** so teams can rename themselves, and **Close preparation** when you are ready to start. |
 | 5–11 | **The Turing Taste Test** — 6 snippets, human or AI. Auto-scored. |
 | 11–18 | **Hallucination Hunt** — 8 confident claims about beer and about Heineken, 4 false. Auto-scored, −2 for a wrong accusation. |
 | 18–26 | **Prompt Golf** — shortest prompt that hits the target. You accept the valid ones; the app ranks by length. |
@@ -159,8 +159,9 @@ Whoever taps an option sets it for the team; a second person tapping something e
 the first. Merging is per-field, so two people filling in different boxes both survive, but two
 people typing in the *same* box will lose one version. Tell each team to nominate one driver.
 
-**Team names.** After the shuffle, any member can rename their team from the Team tab. Names
-lock the moment you open task 1 — enforced by the rules, not just hidden in the UI.
+**Team names.** Teams are created as Team 1, Team 2, … Any member can rename their own team,
+but only while the host has **preparation** open — enforced by the rules, not just hidden in
+the UI. The big screen prompts them during that step.
 
 **Late arrivals.** With **Auto-join late arrivals** ticked (on by default), anyone who registers
 after the shuffle is added to the event and dropped into the smallest team automatically. This
@@ -177,6 +178,9 @@ runs from the host panel, so it only works while that page is open — which it 
   each team's generated picture next to its prompt.
 - **Ending**: "End event & show winners" closes any open task, stops auto-join and switches
   every screen to the results. "Reopen the event" undoes it.
+- **The big screen** always shows which task is open, how many teams have answered and the
+  time left, and ticks each team on the leaderboard as it saves. For MacGyver's Inventory,
+  **Show answers on big screen** in the Review panel puts every invention up to be read.
 - **Host accounts are powerful**: a host can grade, reshuffle teams and promote other hosts.
   Treat `admin1`'s password like an admin password, not a demo one.
 - **Branding**: the HAI mark here — an H with the AI lit up inside it — is original work for
