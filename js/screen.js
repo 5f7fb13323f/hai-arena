@@ -9,7 +9,10 @@ const S = {
   user: null, admin: false, eid: null, event: null,
   teams: [], participants: [], task: null, finale: [], votes: [],
   semi: [], semivotes: [], semiImage: null, subs: [], keys: {},
-  slide: 0, joinUrl: ''
+  slide: 0, joinUrl: '',
+  // Set by gallery() so a click on a tile can find its picture again, and the
+  // id of the tile currently blown up over the whole screen.
+  gallery: {}, zoom: null, zoomVotes: false
 };
 const root = () => $('#root');
 let unsubs = [];
@@ -102,6 +105,9 @@ function paint() {
     root().innerHTML = `<div class="card center"><h1>${esc(t('screenNoEvent'))}</h1></div>`;
     return;
   }
+  const galleryView = !!S.event.showcaseTaskId
+    || S.event.phase === 'semi' || S.event.phase === 'finale';
+  if (!galleryView) S.zoom = null;
   root().innerHTML =
     S.event.showcaseTaskId ? showcaseView() :
     S.event.phase === 'done' ? podiumView() :
@@ -115,9 +121,39 @@ function paint() {
 // Slides are balanced rather than greedy: 20 entries become 10 + 10, not
 // 16 + 4, so the last slide never looks half-empty.
 const GALLERY_MAX = 16;
+const GALLERY_GAP = 12;
+
+// Tiles are square, so their edge is whichever fits: the width the grid has,
+// or the height left under the status bar. Both are measured rather than left
+// to CSS, because a square sized off the height alone runs off the side of a
+// wide projector, and off the bottom of a tall one.
+//
+// The column count is picked to make that square as big as it can be: on a
+// 16:9 projector eleven pictures look far better as 4 + 4 + 3 than as three
+// rows under a 4-column cap.
+function slideLayout(n) {
+  const vw = (typeof window !== 'undefined' && window.innerWidth) || 1280;
+  const vh = (typeof window !== 'undefined' && window.innerHeight) || 800;
+  const w = Math.min(1600, vw - 68);           // page padding on .screen
+  const h = vh - 190;                          // logo row, status bar, dots
+  let best = { cols: Math.min(4, n), edge: 0, waste: Infinity };
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    const byW = (w - GALLERY_GAP * (cols - 1)) / cols;
+    const byH = (h - GALLERY_GAP * (rows - 1)) / rows;
+    const edge = Math.floor(Math.min(byW, byH));
+    const waste = cols * rows - n;
+    if (edge > best.edge + 1 || (Math.abs(edge - best.edge) <= 1 && waste < best.waste)) {
+      best = { cols, edge, waste };
+    }
+  }
+  return { cols: best.cols, edge: Math.max(120, best.edge) };
+}
 
 function gallery(entries, counts, showVotes) {
   const byId = Object.fromEntries(S.teams.map(x => [x.id, x]));
+  S.gallery = Object.fromEntries(entries.map(e => [e.id, e]));
+  S.zoomVotes = !!showVotes;
   if (!entries.length) return `<div class="card center muted">Nothing submitted yet.</div>`;
 
   const slideCount = Math.max(1, Math.ceil(entries.length / GALLERY_MAX));
@@ -131,13 +167,11 @@ function gallery(entries, counts, showVotes) {
       <div class="gallery__track" style="width:${slides.length * 100}%;
            transform:translateX(-${index * (100 / slides.length)}%)">
         ${slides.map(slide => {
-          const cols = Math.min(4, slide.length);
-          const rows = Math.ceil(slide.length / cols);
+          const { cols, edge } = slideLayout(slide.length);
+          const gridW = cols * edge + (cols - 1) * GALLERY_GAP;
           return `<div class="gallery__slide" style="width:${100 / slides.length}%">
-            <div class="gallery__grid"
-                 style="grid-template-columns:repeat(${cols},minmax(0,1fr));
-                        grid-template-rows:repeat(${rows},minmax(0,1fr))">
-              ${slide.map(e => `<figure class="tile">
+            <div class="gallery__grid" style="width:${gridW}px">
+              ${slide.map(e => `<figure class="tile" data-zoom="${esc(e.id)}" style="width:${edge}px">
                 ${e.image
                   ? `<img src="${esc(e.image)}" alt="">`
                   : `<div class="tile__blank">…</div>`}
@@ -154,7 +188,48 @@ function gallery(entries, counts, showVotes) {
       ${slides.length > 1 ? `<div class="gallery__dots">
         ${slides.map((_, i) => `<span class="${i === index ? 'is-on' : ''}"></span>`).join('')}
       </div>` : ''}
+      ${lightbox(counts)}
     </div>`;
+}
+
+// The picture the host clicked, over the whole room. Painted from state, so a
+// snapshot landing while it is open leaves it standing.
+function lightbox(counts) {
+  if (!S.zoom) return '';
+  const e = S.gallery[S.zoom];
+  if (!e || !e.image) return '';
+  const team = S.teams.find(x => x.id === e.id);
+  return `
+    <div class="lightbox" id="lightbox">
+      <img src="${esc(e.image)}" alt="">
+      <div class="lightbox__cap">
+        <span class="dot" style="background:${teamColor(e.id)}"></span>
+        <span>${esc(team?.name || e.id)}</span>
+        ${S.zoomVotes ? `<span class="tile__votes">${(counts || {})[e.id] || 0}</span>` : ''}
+      </div>
+      <div class="lightbox__hint">click anywhere or press Esc to close</div>
+    </div>`;
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', (ev) => {
+    if (ev.target.closest?.('#lightbox')) { S.zoom = null; paint(); return; }
+    const fig = ev.target.closest?.('.tile[data-zoom]');
+    if (!fig) return;
+    const id = fig.dataset.zoom;
+    if (!S.gallery[id]?.image) return;
+    S.zoom = id;
+    paint();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && S.zoom) { S.zoom = null; paint(); }
+  });
+  // Square tiles are sized in pixels, so a resized window needs a repaint.
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(paint, 150);
+  });
 }
 
 function podiumView() {
@@ -423,6 +498,7 @@ setInterval(tick, 1000);
 // Advance the gallery every 10 seconds. Repaint only when a gallery is on
 // screen, so the rest of the time this costs nothing.
 setInterval(() => {
+  if (S.zoom) return;                 // hold the slide while a picture is open
   const track = document.querySelector('.gallery');
   if (!track) return;
   if (Number(track.dataset.slides || 1) < 2) return;

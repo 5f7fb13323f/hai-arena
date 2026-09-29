@@ -48,6 +48,7 @@ watchAuth(async (user) => {
   }, (e) => toast('Could not read users: ' + e.message, 'err')));
   unsubs.push(onSnapshot(collection(db, 'admins'), (qs) => {
     S.hosts = qs.docs.map(d => d.id);
+    autoPlace();                 // a new host comes straight out of their team
     paint();
   }, () => {}));
 });
@@ -84,25 +85,38 @@ function selectEvent(eid) {
   });
 }
 
+// ----------------------------------------------------------- hosts are out --
+// A host runs the event from this panel and stands at the big screen; they are
+// never a player. So hosts are kept out of the roster, out of the shuffle, and
+// out of the headcount the elastic scoring is built on.
+const isHost = (id) => S.hosts.includes(id);
+const playerUsers = () => S.users.filter(u => !isHost(u.id));
+const players = () => S.participants.filter(p => !isHost(p.id));
+
 // --------------------------------------------------- late joiners, handled --
 // Players cannot add themselves (the rules forbid it), so the host panel does
 // it for them: anyone who registers after the shuffle is dropped into the
 // smallest team. Only works while this page is open, which it is all session.
 let placing = false;
 async function autoPlace() {
-  if (!S.event?.autoJoin || S.event.phase === 'done' || !S.eid || placing) return;
+  if (!S.event || S.event.phase === 'done' || !S.eid || placing) return;
 
-  const missing = S.users.filter(u => !S.participants.some(p => p.id === u.id));
-  const unassigned = S.participants.filter(p => !p.teamId);
-  if (!missing.length && !(unassigned.length && S.teams.length)) return;
+  // Someone promoted to host after joining, or a host left over from an older
+  // event. They come out whether or not auto-join is on.
+  const strays = S.participants.filter(p => isHost(p.id));
+  const join = !!S.event.autoJoin;
+  const missing = join ? playerUsers().filter(u => !S.participants.some(p => p.id === u.id)) : [];
+  const unassigned = join ? players().filter(p => !p.teamId) : [];
+  if (!missing.length && !strays.length && !(unassigned.length && S.teams.length)) return;
 
   placing = true;
   try {
+    if (strays.length) await dropHostsFromEvent(strays);
     if (missing.length) await addUsersToEvent(missing.map(u => u.id), { quiet: true });
-    if (S.teams.length) {
-      const fresh = S.participants.filter(p => !p.teamId);
+    if (join && S.teams.length) {
+      const fresh = players().filter(p => !p.teamId);
       if (fresh.length) {
-        const sizes = Object.fromEntries(S.teams.map(x => [x.id, S.participants.filter(p => p.teamId === x.id).length]));
+        const sizes = Object.fromEntries(S.teams.map(x => [x.id, players().filter(p => p.teamId === x.id).length]));
         const b = writeBatch(db);
         for (const p of fresh) {
           const target = Object.entries(sizes).sort((a, c) => a[1] - c[1])[0];
@@ -176,8 +190,30 @@ async function seedTasks() {
     : `Seeded ${TASKS.length} tasks — answers.js is gone, so existing keys were left alone`);
 }
 
+// Takes hosts back out of an event they were added to before they were made a
+// host, and leaves their old team one member lighter.
+async function dropHostsFromEvent(strays) {
+  const b = writeBatch(db);
+  const shrink = {};
+  for (const p of strays) {
+    b.delete(doc(db, 'events', S.eid, 'participants', p.id));
+    b.set(doc(db, 'users', p.id), { eventId: null }, { merge: true });
+    if (p.teamId) shrink[p.teamId] = (shrink[p.teamId] || 0) + 1;
+  }
+  for (const [tid, n] of Object.entries(shrink)) {
+    const team = S.teams.find(x => x.id === tid);
+    if (team) b.set(doc(db, 'events', S.eid, 'teams', tid),
+      { memberCount: Math.max(0, (team.memberCount || 0) - n) }, { merge: true });
+  }
+  await b.commit();
+  toast(`${strays.length} host(s) taken out of the teams`);
+}
+
 async function addUsersToEvent(ids, { quiet = false } = {}) {
-  if (!ids.length) { if (!quiet) toast('Nobody selected', 'err'); return; }
+  const skipped = ids.filter(isHost).length;
+  ids = ids.filter(id => !isHost(id));
+  if (skipped && !quiet) toast(`${skipped} host(s) skipped — hosts do not play`);
+  if (!ids.length) { if (!quiet && !skipped) toast('Nobody selected', 'err'); return; }
   for (let i = 0; i < ids.length; i += 200) {
     const b = writeBatch(db);
     for (const uid of ids.slice(i, i + 200)) {
@@ -200,7 +236,9 @@ async function removeParticipant(uid) {
 }
 
 async function shuffleTeams(size) {
-  const ids = shuffle(S.participants.map(p => p.id));
+  const strays = S.participants.filter(p => isHost(p.id));
+  if (strays.length) await dropHostsFromEvent(strays);
+  const ids = shuffle(players().map(p => p.id));
   if (!ids.length) return toast('No participants yet', 'err');
   const groups = makeTeams(ids, size);
 
@@ -227,7 +265,7 @@ async function openTask(taskId, minutes) {
   const endsAt = new Date(Date.now() + Math.max(1, minutes) * 60000);
   // Scoring is elastic: this task is worth one point per person in the room,
   // fixed at the moment it opens so later arrivals cannot change it.
-  const maxPoints = Math.max(1, S.participants.length);
+  const maxPoints = Math.max(1, players().length);
   const b = writeBatch(db);
   b.set(doc(db, 'events', S.eid, 'tasks', taskId), { status: 'open', endsAt, maxPoints }, { merge: true });
   b.set(doc(db, 'events', S.eid), { activeTaskId: taskId, phase: 'part1' }, { merge: true });
@@ -482,14 +520,16 @@ function paint() {
 }
 
 function rosterCard() {
-  const inEvent = new Set(S.participants.map(p => p.id));
-  const unassigned = S.participants.filter(p => !p.teamId).length;
+  const inEvent = new Set(players().map(p => p.id));
+  const unassigned = players().filter(p => !p.teamId).length;
+  const everyoneIn = playerUsers().length === inEvent.size;
   const f = S.filter.toLowerCase();
   const rows = S.users.filter(u => !f || String(u.username || u.id).toLowerCase().includes(f));
 
   return `<div class="card">
-    <h2>Roster <span class="pill">${S.participants.length} in · ${S.teams.length} teams</span></h2>
-    <p class="faint">${S.users.length} accounts · ${unassigned} without a team · list updates live</p>
+    <h2>Roster <span class="pill">${inEvent.size} playing · ${S.teams.length} teams</span></h2>
+    <p class="faint">${playerUsers().length} player account(s) · ${S.hosts.length} host(s), who do not play ·
+      ${unassigned} without a team · list updates live</p>
 
     <label class="row" style="gap:8px;margin:4px 0 10px;cursor:pointer">
       <input type="checkbox" id="autoJoin" ${S.event.autoJoin ? 'checked' : ''}
@@ -499,9 +539,9 @@ function rosterCard() {
     </label>
 
     <div class="row">
-      <button class="btn btn--sm" id="addAll" ${S.users.length === S.participants.length ? 'disabled' : ''}>Add everyone</button>
-      <button class="btn btn--sm btn--ghost" id="addSel" ${S.users.length === S.participants.length ? 'disabled' : ''}>Add ticked</button>
-      ${S.users.length === S.participants.length
+      <button class="btn btn--sm" id="addAll" ${everyoneIn ? 'disabled' : ''}>Add everyone</button>
+      <button class="btn btn--sm btn--ghost" id="addSel" ${everyoneIn ? 'disabled' : ''}>Add ticked</button>
+      ${everyoneIn
         ? '<span class="faint">everyone is already in — next step is Shuffle</span>' : ''}
     </div>
     <div class="row" style="margin-top:10px">
@@ -527,15 +567,20 @@ function rosterCard() {
       ${rows.map(u => {
         const p = S.participants.find(x => x.id === u.id);
         const team = S.teams.find(x => x.id === p?.teamId);
+        const host = isHost(u.id);
         return `<tr>
-          <td>${p
-            ? '<span title="already in this event" style="color:var(--green);font-weight:700">✓</span>'
-            : `<input type="checkbox" class="upick" value="${esc(u.id)}">`}</td>
+          <td>${host
+            ? '<span title="hosts do not play" class="faint">—</span>'
+            : p
+              ? '<span title="already in this event" style="color:var(--green);font-weight:700">✓</span>'
+              : `<input type="checkbox" class="upick" value="${esc(u.id)}">`}</td>
           <td>${esc(u.username || u.id)}
-            ${S.hosts.includes(u.id) ? '<span class="pill pill--live" style="margin-left:6px">host</span>' : ''}</td>
-          <td class="faint">${team
-            ? `<span class="dot" style="background:${teamColor(team.id)};display:inline-block;margin-right:5px"></span>${esc(team.name)} · ${esc(String(p.slot ?? ''))}`
-            : (p ? 'unassigned' : '—')}</td>
+            ${host ? '<span class="pill pill--live" style="margin-left:6px">host</span>' : ''}</td>
+          <td class="faint">${host
+            ? 'runs the event'
+            : team
+              ? `<span class="dot" style="background:${teamColor(team.id)};display:inline-block;margin-right:5px"></span>${esc(team.name)} · ${esc(String(p.slot ?? ''))}`
+              : (p ? 'unassigned' : '—')}</td>
           <td>${p ? `<button class="btn btn--sm btn--danger" data-rm="${esc(u.id)}" title="Remove from this event">×</button>` : ''}</td>
         </tr>`;
       }).join('')}
@@ -842,7 +887,7 @@ function wire() {
     if (next) { next.focus(); next.setSelectionRange(next.value.length, next.value.length); }
   });
   $('#addAll')?.addEventListener('click', () =>
-    addUsersToEvent(S.users.filter(u => !S.participants.some(p => p.id === u.id)).map(u => u.id)));
+    addUsersToEvent(playerUsers().filter(u => !S.participants.some(p => p.id === u.id)).map(u => u.id)));
   $('#addSel')?.addEventListener('click', () =>
     addUsersToEvent(Array.from(root().querySelectorAll('.upick:checked')).map(c => c.value)));
   $('#shuffle')?.addEventListener('click', () => {
