@@ -18,6 +18,25 @@ const S = {
 const root = () => $('#root');
 const stop = () => { S.unsubs.forEach(u => { try { u(); } catch {} }); S.unsubs = []; };
 
+// Rebuilds a missing roster row from the login itself. The username is the
+// part of the sign-in address before the @, which is exactly what it was
+// created from.
+let healing = false;
+async function healProfile(user) {
+  if (healing) return;
+  healing = true;
+  const username = String(user.email || '').split('@')[0] || 'player';
+  try {
+    await setDoc(doc(db, 'users', user.uid), {
+      username, usernameLower: username.toLowerCase(), createdAt: serverTimestamp()
+    }, { merge: true });
+  } catch (e) {
+    console.warn('HAI ARENA — could not restore the profile row', e);
+  } finally {
+    healing = false;
+  }
+}
+
 // --------------------------------------------------------------- bootstrap --
 
 $('#logoutBtn').addEventListener('click', async () => { stop(); await logout(); });
@@ -41,6 +60,10 @@ watchAuth(async (user) => {
   root().innerHTML = `<div class="card center muted">…</div>`;
 
   S.unsubs.push(onSnapshot(doc(db, 'users', user.uid), (snap) => {
+    // An account created in bulk whose profile row never landed would be
+    // invisible to the host panel for ever. Writing it here, on the first
+    // sign-in, costs nothing and puts the person back on the roster.
+    if (!snap.exists()) { healProfile(user); paint(); return; }
     const data = snap.data() || {};
     $('#topUser').textContent = data.username || '';
     const nextEvent = data.eventId || null;

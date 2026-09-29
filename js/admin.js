@@ -399,9 +399,12 @@ async function deleteEvent(eid) {
   }
 
   // Players follow users/<uid>.eventId, so clear it or they wait forever.
-  for (let i = 0; i < memberIds.length; i += 200) {
+  // Only for accounts that still exist: a merge write would otherwise raise a
+  // nameless stub row for someone whose account was already removed.
+  const live = memberIds.filter(uid => S.users.some(u => u.id === uid));
+  for (let i = 0; i < live.length; i += 200) {
     const b = writeBatch(db);
-    for (const uid of memberIds.slice(i, i + 200)) {
+    for (const uid of live.slice(i, i + 200)) {
       b.set(doc(db, 'users', uid), { eventId: null }, { merge: true });
     }
     await b.commit();
@@ -953,8 +956,18 @@ function wire() {
       S.busy = '';
       paint();
       toast(`${res.made.length} created, ${res.existed.length} already existed`
-        + (res.failed.length ? `, ${res.failed.length} failed` : ''));
-      if (res.failed.length) console.warn('HAI ARENA — failed accounts:', res.failed);
+        + (res.failed.length ? `, ${res.failed.length} failed` : ''),
+        res.failed.length ? 'err' : 'ok');
+      if (res.failed.length) {
+        console.warn('HAI ARENA — failed accounts:', res.failed);
+        // Named, because the fix is to run it again: what exists is skipped.
+        alert('These accounts were not created:\n\n'
+          + res.failed.map(f => `  ${f.username} — ${f.why}`).join('\n')
+          + '\n\nClick the button again to retry — accounts that already exist are skipped.'
+          + (res.failed.some(f => String(f.why).includes('too-many-requests'))
+            ? '\n\nFirebase is throttling sign-ups from this address. Wait a few minutes first.'
+            : ''));
+      }
     } catch (err) {
       S.busy = '';
       paint();
