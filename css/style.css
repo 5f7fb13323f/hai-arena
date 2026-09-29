@@ -373,27 +373,59 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 /* ------------------------------------------------------------- gallery -- */
 .gallery { overflow: hidden; }
 .gallery__track { display: flex; transition: transform .6s cubic-bezier(.4,0,.2,1); }
-.gallery__slide { flex: none; }
-/* Fills what is left of the screen under the status bar, so the pictures are
-   as big as the room's projector allows. */
-.gallery__grid { display: grid; gap: 12px; height: calc(100vh - 190px); min-height: 380px; }
-.tile {
-  margin: 0; border-radius: 12px; overflow: hidden; min-height: 0;
-  background: var(--panel); border: 1px solid var(--line);
-  display: flex; flex-direction: column;
+.gallery__slide { flex: none; display: grid; place-items: center; }
+/* Tiles are square. The tile edge is measured in JS from what is left of the
+   screen under the status bar, so the grid is as big as the room's projector
+   allows without ever stretching a picture. */
+/* Flex rather than grid so a short last row sits centred under the others. */
+.gallery__grid {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  justify-content: center; align-content: center; margin: 0 auto;
+  max-width: 100%;
 }
-.tile img { width: 100%; flex: 1 1 auto; min-height: 0; object-fit: cover; display: block; }
+.tile {
+  position: relative; margin: 0; border-radius: 12px; overflow: hidden;
+  flex: 0 0 auto; aspect-ratio: 1 / 1; cursor: zoom-in;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.tile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .tile__blank {
-  flex: 1 1 auto; min-height: 0; display: grid; place-items: center;
+  position: absolute; inset: 0; display: grid; place-items: center;
   color: var(--ink-faint); font-size: 26px;
 }
 .tile figcaption {
-  display: flex; align-items: center; gap: 7px; flex: none;
-  padding: 7px 10px; font-weight: 700;
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; gap: 7px;
+  padding: 16px 10px 7px; font-weight: 700;
   font-size: clamp(12px, 1vw, 17px);
+  background: linear-gradient(to top, rgba(4, 18, 11, .92), rgba(4, 18, 11, 0));
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .8);
 }
 .tile__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile__votes { margin-left: auto; font: 800 clamp(14px,1.2vw,20px) var(--mono); color: var(--green); }
+
+/* Click a tile on the big screen and it fills the room. */
+.lightbox {
+  position: fixed; inset: 0; z-index: 90; cursor: zoom-out;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; padding: 24px;
+  background: rgba(2, 10, 6, .94); backdrop-filter: blur(6px);
+  animation: lightin .18s ease-out;
+}
+@keyframes lightin { from { opacity: 0 } to { opacity: 1 } }
+.lightbox img {
+  /* Uploads are downscaled to 900px, so let the picture grow to fill the
+     projector rather than sitting small in the middle of a black screen. */
+  height: 80vh; width: auto; max-width: 94vw; object-fit: contain;
+  border-radius: 16px; border: 1px solid var(--line);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .6);
+}
+.lightbox__cap {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 800; font-size: clamp(18px, 2vw, 32px);
+}
+.lightbox__cap .tile__votes { font-size: clamp(18px, 2vw, 32px); margin-left: 8px; }
+.lightbox__hint { color: var(--ink-faint); font-size: 14px; }
 
 .gallery__dots { display: flex; gap: 7px; justify-content: center; margin-top: 14px; }
 .gallery__dots span {
@@ -402,7 +434,6 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 }
 .gallery__dots span.is-on { background: var(--green); width: 26px; border-radius: 5px; }
 
-@media (max-width: 900px) { .gallery__grid { grid-template-columns: repeat(2, 1fr); } }
 
 .linklike {
   background: none; border: 0; padding: 0; margin-left: 4px;
